@@ -8,13 +8,17 @@ const CLARIFY_QUESTIONS = [
 export class StateMachine {
   #repo;
   #formatter;
+  #runner;
 
-  constructor(repo, formatter) {
+  constructor(repo, formatter, runner = null) {
     this.#repo = repo;
     this.#formatter = formatter;
+    this.#runner = runner;
   }
 
   static AFFIRM_RE = /^\s*(?:s[ií]\s*[,;:.!?…]*\s*(?:eso\s+es)?|eso\s+es|ok(?:ay)?|dale|vamos|correcto|exacto|perfecto|aprobado|apruebo|confirmo|sí)\s*[.!,…]*\s*$/i;
+
+  static SENT_HINT_RE = /\b(envi|mand|sent)[a-záéíóúüñ]*/i;
 
   async handle(userId, text) {
     const raw = String(text || '').trim();
@@ -26,6 +30,9 @@ export class StateMachine {
 
 
     const conv = this.#repo.conversation(userId);
+    if (conv.ctx?.confirming) {
+      return this.#confirmStep(conv, userId, raw);
+    }
     switch (conv.phase) {
       case 'goal': return this.#phaseGoal(conv, userId, raw);
       case 'process': return this.#phaseProcess(conv, userId, raw);
@@ -76,6 +83,9 @@ export class StateMachine {
     if (cmd === '/status') {
       return { phase: conv.phase, reply: '```json\n' + JSON.stringify(this.status(userId), null, 2) + '\n```' };
     }
+    if (cmd === '/confirm') {
+      return this.#confirmStart(conv, userId);
+    }
     if (cmd === '/skip') {
       if (conv.phase === 'improve') {
         return this.#phaseImprove(conv, userId, raw);
@@ -85,9 +95,9 @@ export class StateMachine {
       }
       return { phase: conv.phase, reply: '/skip solo aplica en las fases clarify/improve.' };
     }
-    return { phase: conv.phase, reply: 'Comando no reconocido. Comandos: /start, /reset, /restate, /status, /skip.' };
-  }
 
+    return { phase: conv.phase, reply: 'Comando no reconocido. Comandos: /start, /reset, /restate, /status, /skip, /confirm.' };
+  }
 
   async #phaseGoal(conv, userId, raw) {
     const ctx = { ...conv.ctx };
@@ -300,7 +310,6 @@ export class StateMachine {
       ].join('\n')
     };
   }
-
   #processSummary(proc) {
     if (!proc) return '(sin proceso)';
     return [
@@ -363,7 +372,90 @@ export class StateMachine {
       goal: conv.ctx?.goal ?? null,
       process: conv.ctx?.process?.structured ?? null,
       rules: this.#repo.rules(conv.id),
-      routine: conv.ctx?.routine ?? null
+      routine: conv.ctx?.routine ?? null,
+      confirming: conv.ctx?.confirming ?? null
     };
+  }
+
+
+  #confirmStart(conv, userId) {
+    if (!this.#runner) {
+      return { phase: conv.phase, reply: 'Confirmación conversacional no disponible en este modo (falta el runner de rutinas).' };
+    }
+    if (conv.ctx?.confirming) {
+      const current = this.#runner.list(userId).find((j) => j.idempotency_key === conv.ctx.confirming.idempotency_key);
+      if (!current) {
+        const ctx = { ...conv.ctx };
+        delete ctx.confirming;
+        this.#repo.saveContext(conv, ctx, conv.phase);
+        return { phase: conv.phase, reply: 'Ese job ya no está en waiting. Usá /confirm de nuevo.' };
+      }
+      return this.#confirmAsk(conv, current, ['Seguimos donde estábamos:']);
+    }
+    const jobs = this.#runner.waiting(userId);
+    if (!jobs.length) {
+      return { phase: conv.phase, reply: 'No hay jobs en waiting para confirmar.' };
+    }
+    const ctx = { ...conv.ctx };
+    ctx.confirming = { idempotency_key: jobs[0].idempotency_key };
+    this.#repo.saveContext(conv, ctx, conv.phase);
+    return this.#confirmAsk(conv, jobs[0], [`Hay ${jobs.length} job(s) en waiting. Vamos uno a la vez.`]);
+  }
+
+  #confirmAsk(conv, job, extra = []) {
+    return {
+      phase: conv.phase,
+      reply: [
+        ...extra,
+        `Job pendiente: orden ${job.orderNumber ?? '(sin número de orden)'} — saved_at: ${job.saved_at} — clave ${job.idempotency_key.slice(0, 12)}…`,
+        '¿Confirmás que VOS la revisaste y quedó bien? ("enviado" NO cuenta como done.)',
+        'Respondé "sí" para confirmar, "no" para dejarla en waiting, o "cancelar".'
+      ].join('\n\n')
+    };
+  }
+
+  #confirmStep(conv, userId, raw) {
+    const ctx = { ...conv.ctx };
+    const key = ctx.confirming.idempotency_key;
+
+
+    if (StateMachine.AFFIRM_RE.test(raw)) {
+      const out = this.#runner.confirmJob(userId, key, 'confirmado por chat (revisión personal)');
+      const pending = this.#runner.waiting(userId);
+      if (pending.length) {
+        ctx.confirming = { idempotency_key: pending[0].idempotency_key };
+        this.#repo.saveContext(conv, ctx, conv.phase);
+        return this.#confirmAsk(
+          conv,
+          pending[0],
+          [`Orden ${out.job ? 'confirmada' : 'procesada'}: confirmed_at ${this.#runner.list(userId).find((j) => j.idempotency_key === key)?.confirmed_at ?? '(ya estaba)'}`]
+        );
+      }
+      delete ctx.confirming;
+      this.#repo.saveContext(conv, ctx, conv.phase);
+      return {
+        phase: conv.phase,
+        reply: `Confirmada. confirmed_at: ${this.#runner.list(userId).find((j) => j.idempotency_key === key)?.confirmed_at ?? '(ya estaba confirmada)'}`
+      };
+    }
+
+    if (/^\s*cancel(?:ar|o)?\s*[.!,…]*\s*$/i.test(raw)) {
+      delete ctx.confirming;
+      this.#repo.saveContext(conv, ctx, conv.phase);
+      return { phase: conv.phase, reply: 'Cancelado, seguimos antes de la confirmación. Usá /confirm para retomar.' };
+    }
+
+    if (/^\s*no\b/i.test(raw)) {
+      this.#runner.rejectJob(userId, key, raw);
+      delete ctx.confirming;
+      this.#repo.saveContext(conv, ctx, conv.phase);
+      return { phase: conv.phase, reply: 'Ok, queda en waiting. Retomala con /confirm cuando la revises.' };
+    }
+
+    this.#runner.rejectJob(userId, key, raw);
+    if (StateMachine.SENT_HINT_RE.test(raw)) {
+      return { phase: conv.phase, reply: '"enviado"/"sent" NO cuenta como done. Respondé "sí" si vos mismo la revisaste y quedó bien, "no" si sigue pendiente, o "cancelar".' };
+    }
+    return { phase: conv.phase, reply: 'No entendí la respuesta. Respondé "sí" (confirmás), "no" (queda en waiting) o "cancelar".' };
   }
 }

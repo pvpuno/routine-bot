@@ -18,7 +18,6 @@ CREATE TABLE IF NOT EXISTS goals (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
-
 CREATE TABLE IF NOT EXISTS processes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   conversation_id INTEGER NOT NULL REFERENCES conversations(id),
@@ -33,6 +32,7 @@ CREATE TABLE IF NOT EXISTS processes (
   confirmed INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
+
 
 CREATE TABLE IF NOT EXISTS rules (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -58,13 +58,14 @@ CREATE TABLE IF NOT EXISTS jobs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   routine_id INTEGER NOT NULL REFERENCES routines(id),
   user_id TEXT NOT NULL,
-  idempotency_key TEXT NOT NULL UNIQUE,
+  idempotency_key TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'waiting',
   payload TEXT NOT NULL,
   attempts TEXT NOT NULL DEFAULT '[]',
   saved_at TEXT,
   confirmed_at TEXT,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE(user_id, idempotency_key)
 );
 
 CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id, active);

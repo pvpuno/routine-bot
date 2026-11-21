@@ -50,8 +50,8 @@ export function StubFormatter() {
 
 export function setup() {
   const repo = openDb(':memory:');
-  const machine = new StateMachine(repo, StubFormatter());
   const runner = new Runner(repo);
+  const machine = new StateMachine(repo, StubFormatter(), runner);
   return { repo, machine, runner };
 }
 

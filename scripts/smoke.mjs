@@ -68,8 +68,8 @@ function DemoFormatter() {
 
 export function setupBot() {
   const repo = openDb(':memory:');
-  const machine = new StateMachine(repo, DemoFormatter());
   const runner = new Runner(repo);
+  const machine = new StateMachine(repo, DemoFormatter(), runner);
   return { repo, machine, runner };
 }
 
