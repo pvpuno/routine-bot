@@ -6,7 +6,7 @@ import { config } from './config.js';
 const SCHEMA_SQL = fs.readFileSync(new URL('../db/schema.sql', import.meta.url), 'utf8');
 
 export function openDb(file = config.DB_PATH) {
-  fs.mkdirSync(file === ':memory:' ? '.' : file.replace(/\/[^/]+$/, ''), { recursive: true });
+  fs.mkdirSync(file === ':memory:' ? '.' : path.dirname(file), { recursive: true });
   const db = new DatabaseSync(file);
   db.exec(SCHEMA_SQL);
   db.exec('PRAGMA journal_mode = WAL');
