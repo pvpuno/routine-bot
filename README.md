@@ -27,6 +27,10 @@ Reglas globales implementadas:
   y se re-retoma con la misma clave; **nunca se re-crea un job duplicado**.
 - `confirmed` exige confirmación personal: "sent" / "enviado" NO cuenta como done
   (queda registrado como intento rechazado en `attempts`).
+- La confirmación en el chat es **conversacional**: `/confirm` pregunta uno a uno por los jobs
+  en `waiting` y solo un "sí" explícito confirma (el mismo `AFFIRM_RE` de la máquina).
+  Frases como "te lo envié" nunca confirman: se registran como intento rechazado y el diálogo
+  sigue esperando un sí/no/cancelar. El `Runner.confirmJob` programático queda para integraciones.
 - `saved_at` y `confirmed_at` son DOS timestamps distintos; el listado de jobs muestra ambos.
 
 ## Estructura
@@ -85,7 +89,7 @@ tú:  sí
 bot: Aprobado y activado. La ejecución automática corre SOLO para esta rutina aprobada.
 ```
 
-Comandos: `/start` (nueva conversación), `/restate`, `/status`, `/skip`, `/jobs` (lista de jobs con ambos timestamps).
+Comandos: `/start` (nueva conversación), `/restate`, `/status`, `/skip`, `/jobs` (lista de jobs con ambos timestamps) y `/confirm` (revisa y confirma los jobs en `waiting`, uno a la vez).
 
 ### Ingesta de emails en v1
 

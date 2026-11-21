@@ -45,7 +45,7 @@ export class Runner {
     }
 
     const key = keyFor(norm.email);
-    const existing = this.#repo.findJob(key);
+    const existing = this.#repo.findJob(key, userId);
     if (existing) throw new DuplicateJobError(existing);
 
 
@@ -55,11 +55,16 @@ export class Runner {
       orderNumber: norm.email.orderNumber,
       subject: norm.email.subject
     });
+    if (!job) {
+      const dupe = this.#repo.findJob(key, userId);
+      if (dupe) throw new DuplicateJobError(dupe);
+      throw new RoutineError('La inserción del job falló inesperadamente.', 'insert_failed');
+    }
     return { job, idempotencyKey: key, routine_id: routine.id, orderNumber: norm.email.orderNumber };
   }
 
   confirmJob(userId, idempotencyKey, message) {
-    const job = this.#repo.findJob(idempotencyKey);
+    const job = this.#repo.findJob(idempotencyKey, userId);
     if (!job) throw new RoutineError('No existe job para esa idempotency_key.', 'job_not_found');
     if (job.user_id !== userId) throw new RoutineError('El job pertenece a otro usuario.', 'forbidden');
 
@@ -82,11 +87,21 @@ export class Runner {
   }
 
   failJob(userId, idempotencyKey, note = '') {
-    const job = this.#repo.findJob(idempotencyKey);
+    const job = this.#repo.findJob(idempotencyKey, userId);
     if (!job) throw new RoutineError('No existe job para esa idempotency_key.', 'job_not_found');
     return { job: this.#repo.failJob(job.id, note), failed: true };
   }
 
+
+  rejectJob(userId, idempotencyKey, note = '') {
+    const job = this.#repo.findJob(idempotencyKey, userId);
+    if (!job) throw new RoutineError('No existe job para esa idempotency_key.', 'job_not_found');
+    return {
+      job: this.#repo.logAttempt(job.id, `respuesta rechazada (no confirma): "${note}"`),
+      confirmed: false,
+      reason: 'rejected_in_dialog'
+    };
+  }
 
   list(userId, status = null) {
     return this.#repo.jobsFor(userId, status).map((j) => ({

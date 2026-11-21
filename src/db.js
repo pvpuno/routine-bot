@@ -8,6 +8,9 @@ export function openDb(file = config.DB_PATH) {
   fs.mkdirSync(file === ':memory:' ? '.' : file.replace(/\/[^/]+$/, ''), { recursive: true });
   const db = new DatabaseSync(file);
   db.exec(SCHEMA_SQL);
+  db.exec('PRAGMA journal_mode = WAL');
+  db.exec('PRAGMA foreign_keys = ON');
+  db.exec('PRAGMA busy_timeout = 5000');
   return new Repo(db);
 }
 
@@ -22,6 +25,18 @@ export class Repo {
     this.db = db;
   }
 
+  #withTransaction(fn) {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const out = fn();
+      this.db.exec('COMMIT');
+      return out;
+    } catch (err) {
+      try { this.db.exec('ROLLBACK'); } catch { /* ya no hay transacción activa */ }
+      throw err;
+    }
+  }
+
   conversation(user_id) {
     let row = this.db.prepare(
       'SELECT * FROM conversations WHERE user_id = ? AND active = 1 ORDER BY id DESC LIMIT 1'
@@ -32,6 +47,7 @@ export class Repo {
     }
     return { ...row, ctx: P(row.context, {}) };
   }
+
 
   saveContext(conv, ctx, phase = conv.phase) {
     this.db.prepare(
@@ -49,7 +65,6 @@ export class Repo {
       'INSERT INTO goals (conversation_id, user_id, original_text, restated, confirmed) VALUES (?, ?, ?, ?, ?)'
     ).run(conv.id, userId, original, restated ?? null, confirmed ? 1 : 0);
   }
-
 
   latestGoal(convId) {
     return this.db.prepare('SELECT * FROM goals WHERE conversation_id = ? ORDER BY id DESC LIMIT 1').get(convId) || null;
@@ -80,6 +95,7 @@ export class Repo {
     return this.db.prepare('SELECT * FROM rules WHERE conversation_id = ? ORDER BY id').all(convId);
   }
 
+
   saveRoutine(conv, userId, routine) {
     const action = Array.isArray(routine.action) ? JSON.stringify(routine.action) : String(routine.action);
     const res = this.db.prepare(
@@ -96,48 +112,56 @@ export class Repo {
     this.db.prepare('UPDATE routines SET active = ? WHERE id = ?').run(active ? 1 : 0, routineId);
   }
 
-
-  findJob(idempotency_key) {
+  findJob(idempotency_key, userId = null) {
+    if (userId != null) {
+      return this.db.prepare('SELECT * FROM jobs WHERE idempotency_key = ? AND user_id = ?').get(idempotency_key, userId) || null;
+    }
     return this.db.prepare('SELECT * FROM jobs WHERE idempotency_key = ?').get(idempotency_key) || null;
   }
 
   insertJob(routine, userId, idempotency_key, payload) {
     const res = this.db.prepare(
-      "INSERT INTO jobs (routine_id, user_id, idempotency_key, status, payload, saved_at, confirmed_at) VALUES (?, ?, ?, 'waiting', ?, ?, NULL)"
+      "INSERT INTO jobs (routine_id, user_id, idempotency_key, status, payload, saved_at, confirmed_at) VALUES (?, ?, ?, 'waiting', ?, ?, NULL) ON CONFLICT(user_id, idempotency_key) DO NOTHING"
     ).run(routine.id, userId, idempotency_key, J(payload), now());
-    return this.findJob(idempotency_key);
+    return res.changes === 0 ? null : this.findJob(idempotency_key, userId);
   }
 
+
   confirmJob(jobId, note) {
-    const job = this.db.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId);
-    const attempts = P(job.attempts, []);
-    attempts.push({ at: now(), result: 'confirmed', note });
-    this.db.prepare(
-      "UPDATE jobs SET status = 'confirmed', confirmed_at = ?, attempts = ? WHERE id = ?"
-    ).run(now(), J(attempts), jobId);
-    return this.db.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId);
+    return this.#withTransaction(() => {
+      const job = this.db.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId);
+      const attempts = P(job.attempts, []);
+      attempts.push({ at: now(), result: 'confirmed', note });
+      this.db.prepare(
+        "UPDATE jobs SET status = 'confirmed', confirmed_at = ?, attempts = ? WHERE id = ?"
+      ).run(now(), J(attempts), jobId);
+      return this.db.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId);
+    });
   }
 
   logAttempt(jobId, note) {
-    const job = this.db.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId);
-    const attempts = P(job.attempts, []);
-    attempts.push({ at: now(), result: 'rejected', note });
-    this.db.prepare('UPDATE jobs SET attempts = ? WHERE id = ?').run(J(attempts), jobId);
-    return this.db.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId);
+    return this.#withTransaction(() => {
+      const job = this.db.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId);
+      const attempts = P(job.attempts, []);
+      attempts.push({ at: now(), result: 'rejected', note });
+      this.db.prepare('UPDATE jobs SET attempts = ? WHERE id = ?').run(J(attempts), jobId);
+      return this.db.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId);
+    });
   }
 
   failJob(jobId, note) {
-    const job = this.db.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId);
-    const attempts = P(job.attempts, []);
-    attempts.push({ at: now(), result: 'failed', note });
-    this.db.prepare("UPDATE jobs SET status = 'failed', attempts = ? WHERE id = ?").run(J(attempts), jobId);
-    return this.db.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId);
+    return this.#withTransaction(() => {
+      const job = this.db.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId);
+      const attempts = P(job.attempts, []);
+      attempts.push({ at: now(), result: 'failed', note });
+      this.db.prepare("UPDATE jobs SET status = 'failed', attempts = ? WHERE id = ?").run(J(attempts), jobId);
+      return this.db.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId);
+    });
   }
 
   job(id) {
     return this.db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
   }
-
 
   jobsFor(userId, status = null) {
     if (status) {
