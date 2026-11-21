@@ -7,6 +7,7 @@ const root = path.resolve(new URL('..', import.meta.url).pathname);
 export const config = {
   DB_PATH: process.env.DB_PATH || path.join(root, 'data', 'routine-bot.db'),
   TELEGRAM_TOKEN: process.env.TELEGRAM_TOKEN || '',
+  ALLOWED_TELEGRAM_IDS: process.env.ALLOWED_TELEGRAM_IDS || '',
   MISTRAL_API_KEY: process.env.MISTRAL_API_KEY || '',
   MISTRAL_MODEL: process.env.MISTRAL_MODEL || 'mistral-large-latest',
   MISTRAL_BASE_URL: process.env.MISTRAL_BASE_URL || 'https://api.mistral.ai/v1',
@@ -16,3 +17,10 @@ export const config = {
 };
 
 fs.mkdirSync(path.dirname(config.DB_PATH), { recursive: true });
+
+// Sin allowlist definida (o vacía) se mantiene el comportamiento de v1: entra todo.
+export function isAllowedTelegramId(userId, raw = config.ALLOWED_TELEGRAM_IDS) {
+  const allowed = String(raw ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (!allowed.length) return true;
+  return allowed.includes(String(userId).trim());
+}

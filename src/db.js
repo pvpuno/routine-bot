@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { config } from './config.js';
 
@@ -161,6 +162,17 @@ export class Repo {
 
   job(id) {
     return this.db.prepare('SELECT * FROM jobs WHERE id = ?').get(id);
+  }
+
+  cursor(name) {
+    const row = this.db.prepare('SELECT value FROM cursors WHERE name = ?').get(name);
+    return row ? row.value : null;
+  }
+
+  saveCursor(name, value) {
+    this.db.prepare(
+      'INSERT INTO cursors (name, value) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET value = excluded.value'
+    ).run(name, String(value));
   }
 
   jobsFor(userId, status = null) {
