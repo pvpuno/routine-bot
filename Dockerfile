@@ -1,8 +1,7 @@
 FROM node:22-slim
 WORKDIR /app
 ENV NODE_ENV=production
-COPY package.json package-lock.json* ./
-RUN npm install --omit=dev || true
+COPY package.json ./
 COPY db ./db
 COPY src ./src
 RUN mkdir -p data

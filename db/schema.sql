@@ -72,3 +72,8 @@ CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id, acti
 CREATE INDEX IF NOT EXISTS idx_rules_conversation ON rules(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_routines_user ON routines(user_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_key ON jobs(idempotency_key);
+
+CREATE TABLE IF NOT EXISTS cursors (
+  name TEXT PRIMARY KEY,
+  value TEXT
+);

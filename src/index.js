@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { config } from './config.js';
+import { config, isAllowedTelegramId } from './config.js';
 import { openDb } from './db.js';
 import { MistralFormatter, LlmError } from './llm.js';
 import { StateMachine } from './machine.js';
@@ -18,7 +18,10 @@ fileEnv(new URL('../../.env', import.meta.url).pathname);
 const repo = openDb(config.DB_PATH);
 const machine = new StateMachine(repo, new MistralFormatter());
 const runner = new Runner(repo);
-const poller = new TelegramPoller(config);
+const poller = new TelegramPoller(config, console, {
+  loadOffset: () => repo.cursor('telegram_offset'),
+  saveOffset: (value) => repo.saveCursor('telegram_offset', value)
+});
 
 const VOICE_NOTICE = 'Recibí una nota de voz. En v1 solo leo texto: transcribila y mandala como mensaje. (Voz llega en v2.)';
 const ATTACH_NOTICE = 'Recibí un adjunto. En v1 solo leo texto plano.';
@@ -28,6 +31,12 @@ async function onUpdate(update) {
   if (!message) return;
   const userId = String(message.from?.id ?? 'unknown');
   const chatId = String(message.chat?.id ?? userId);
+
+  if (!isAllowedTelegramId(userId)) {
+    console.log(`Update rechazado: usuario ${userId} fuera de la allowlist`);
+    await poller.sendMessage(chatId, 'Acceso restringido. Este bot no puede atenderte.');
+    return;
+  }
 
   let text;
   if (message.voice || message.audio) {
