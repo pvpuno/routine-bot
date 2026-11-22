@@ -50,7 +50,10 @@ test('gmail: extractGmailText prefiere text/plain y cae a text/html; gmailHeader
 
   assert.equal(extractGmailText(null), null);
   assert.equal(extractGmailText({ mimeType: 'text/plain' }), null);
-  assert.match(oauthConsentUrl({ clientId: 'ABC' }), /^https:\/\/accounts\.google\.com\/.*client_id=ABC.*access_type=offline/);
+  const url = oauthConsentUrl({ clientId: 'ABC' });
+  assert.match(url, /^https:\/\/accounts\.google\.com\/.*client_id=ABC.*access_type=offline/);
+  assert.match(url, /gmail\.readonly/);
+  assert.match(url, /pubsub/, 'el consentimiento incluye el scope de Pub/Sub para el push');
 });
 
 function gmailMessage({ id, from, msgId, subject, body, mimeType = 'text/plain' }) {

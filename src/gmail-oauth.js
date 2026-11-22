@@ -34,7 +34,7 @@ export class GmailOAuthChat {
   }
 
   // null = no es asunto de este flujo; deja que el texto siga a la máquina de estados.
-  handle(userId, raw) {
+  async handle(userId, raw) {
     const text = String(raw ?? '').trim();
     const session = this.#sessions.get(userId);
     if (session) {
@@ -52,7 +52,7 @@ export class GmailOAuthChat {
     return this.#sessions.size;
   }
 
-  #command(userId, text) {
+  async #command(userId, text) {
     if (!this.available()) {
       return 'Para conectar casillas por chat necesito ADMIN_TELEGRAM_ID en la config: solo el admin puede iniciar el OAuth de Gmail.';
     }
@@ -61,6 +61,7 @@ export class GmailOAuthChat {
     }
     const parts = text.split(/\s+/);
     if (parts[1]?.toLowerCase() === 'status') return this.#status(userId);
+    if (parts[1]?.toLowerCase() === 'watch') return this.#watch(userId, parts[2]?.toLowerCase() || '', parts[3]);
     if (parts[1]?.toLowerCase() === 'off') return this.#off(userId, parts[2]);
     this.#sessions.set(userId, { step: 'creds', at: Date.now() });
     return [
@@ -163,6 +164,46 @@ export class GmailOAuthChat {
       n++;
     }
     return name;
+  }
+
+  async #watch(userId, action, name) {
+    if (action !== 'on' && action !== 'off') {
+      return 'Usá "/gmail watch on" (o con <name> para una sola casilla) o "/gmail watch off [name]". Los nombres están en /gmail status.';
+    }
+    if (action === 'on' && !String(config.GMAIL_WATCH_TOPIC || '').trim()) {
+      return 'Para el push instantáneo definí GMAIL_WATCH_TOPIC (projects/TU_PROYECTO/topics/TU_TOPIC) en la config.';
+    }
+    const gmails = this.#ingesters.filter((x) => typeof x.startWatch === 'function');
+    const targets = name ? gmails.filter((x) => x.name === name) : gmails;
+    if (!targets.length) {
+      return name
+        ? `No encuentro una casilla Gmail llamada "${name}". Mirá /gmail status.`
+        : 'No hay casillas Gmail conectadas todavía: conectá una con /gmail.';
+    }
+    if (action === 'on') {
+      const topic = String(config.GMAIL_WATCH_TOPIC).trim();
+      const lines = [];
+      for (const ing of targets) {
+        const res = await ing.startWatch(topic);
+        const exp = Number(res?.expiration) || Date.now() + 6 * 24 * 3600000;
+        this.#repo.saveCursor(`gmail_watch:${ing.name}`, String(exp));
+        lines.push(`- ${ing.name}: push activo`);
+      }
+      return [
+        'Push instantáneo activado (se renueva solo antes de vencer):',
+        ...lines,
+        '',
+        'El push llega si definiste GMAIL_PUBSUB_SUBSCRIPTION con tu suscripción PULL, y',
+        'la cuenta de servicio gmail-api-push@system.gserviceaccount.com tiene rol publisher en el topic.'
+      ].join('\n');
+    }
+    const lines = [];
+    for (const ing of targets) {
+      await ing.stopWatch?.();
+      this.#repo.saveCursor(`gmail_watch:${ing.name}`, 'off');
+      lines.push(`- ${ing.name}: push desactivado`);
+    }
+    return ['Push desactivado (vuelve con /gmail watch on):', ...lines].join('\n');
   }
 
   #off(userId, name) {

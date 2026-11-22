@@ -13,6 +13,7 @@ import { createPollWatchdog } from './watchdog.js';
 import { ImapIngest, parseImapAccounts } from './imap.js';
 import { GmailIngest, parseGmailAccounts } from './gmail.js';
 import { GmailOAuthChat } from './gmail-oauth.js';
+import { GmailPushLoop } from './gmail-push.js';
 import { ConnectorRegistry, IngestLoop } from './connectors.js';
 import { ActionDispatcher, WebhookAdapter } from './actions.js';
 
@@ -63,7 +64,7 @@ function humanUptime() {
 function healthReport() {
   const h = repo.health();
   const jobs = Object.entries(h.jobs).map(([k, v]) => `${k}=${v}`).join(', ') || 'ninguno';
-  const loops = [reminders, scheduleLoop, statsLoop, backups, ingestLoop]
+  const loops = [reminders, scheduleLoop, statsLoop, backups, ingestLoop, gmailPushLoop]
     .filter(Boolean)
     .map((l) => {
       const extra = l.lastRunAt
@@ -117,6 +118,7 @@ try {
   console.error(`Gmail (cuentas por chat) deshabilitado: ${err.message}`);
 }
 const gmailOauth = new GmailOAuthChat({ repo, runner, poller, ingesters, logger: console });
+const gmailPushLoop = new GmailPushLoop({ repo, ingesters, logger: console });
 if (ingesters.length) {
   const seconds = Math.min(
     String(config.IMAP_ACCOUNTS || '').trim() ? config.IMAP_POLL_SECONDS : Infinity,
@@ -201,6 +203,7 @@ process.on('SIGINT', () => {
   statsLoop.stop();
   backups.stop();
   ingestLoop?.stop();
+  gmailPushLoop.stop();
   process.exit(0);
 });
 
@@ -210,4 +213,5 @@ scheduleLoop.start();
 statsLoop.start();
 backups.start();
 ingestLoop?.start();
+gmailPushLoop.start();
 await poller.start(onUpdate);
