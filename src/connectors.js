@@ -1,3 +1,4 @@
+import { TaskLoop } from './task-loop.js';
 export class IngestConnector {
   name;
 
@@ -51,5 +52,30 @@ export class ConnectorRegistry {
 
   list() {
     return [...this.#adapters.keys()];
+  }
+}
+
+export class IngestLoop extends TaskLoop {
+  #ingesters;
+
+  constructor({ ingesters = [], logger = console, tickMs = 60000 } = {}) {
+    super({ logger, tickMs });
+    this.#ingesters = ingesters;
+  }
+
+  get loopName() {
+    return 'ingest';
+  }
+
+  async runOnce() {
+    const results = [];
+    for (const ingester of this.#ingesters) {
+      try {
+        results.push(await ingester.poll());
+      } catch (err) {
+        this.logError(`[${ingester.name}] ${err.message}`);
+      }
+    }
+    return results;
   }
 }

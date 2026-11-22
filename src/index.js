@@ -9,6 +9,8 @@ import { ReminderLoop } from './reminders.js';
 import { ScheduleLoop } from './schedule.js';
 import { StatsLoop } from './stats.js';
 import { createPollWatchdog } from './watchdog.js';
+import { ImapIngest, parseImapAccounts } from './imap.js';
+import { IngestLoop } from './connectors.js';
 
 function fileEnv(path) {
   if (!fs.existsSync(path)) return;
@@ -30,6 +32,21 @@ poller.onPollFailure = createPollWatchdog(repo, poller, config.ADMIN_TELEGRAM_ID
 const reminders = new ReminderLoop({ repo, poller });
 const scheduleLoop = new ScheduleLoop({ repo, poller });
 const statsLoop = new StatsLoop({ repo, poller });
+
+const imapIngesters = [];
+let ingestLoop = null;
+try {
+  for (const account of parseImapAccounts(config.IMAP_ACCOUNTS)) {
+    const ingester = new ImapIngest(account, { logger: console });
+    ingester.init({ repo, runner, poller, logger: console });
+    imapIngesters.push(ingester);
+  }
+  if (imapIngesters.length) {
+    ingestLoop = new IngestLoop({ ingesters: imapIngesters, tickMs: Math.max(15, config.IMAP_POLL_SECONDS) * 1000 });
+  }
+} catch (err) {
+  console.error(`IMAP deshabilitado: ${err.message}`);
+}
 
 const VOICE_NOTICE = 'Recibí una nota de voz. En v1 solo leo texto: transcribila y mandala como mensaje. (Voz llega en v2.)';
 const ATTACH_NOTICE = 'Recibí un adjunto. En v1 solo leo texto plano.';
@@ -80,6 +97,7 @@ process.on('SIGINT', () => {
   reminders.stop();
   scheduleLoop.stop();
   statsLoop.stop();
+  ingestLoop?.stop();
   process.exit(0);
 });
 
@@ -87,4 +105,5 @@ console.log('routine-bot en marcha (long polling). DB:', config.DB_PATH);
 reminders.start();
 scheduleLoop.start();
 statsLoop.start();
+ingestLoop?.start();
 await poller.start(onUpdate);
