@@ -161,7 +161,32 @@ sudo systemctl enable --now routine-bot
 - Backup de la DB: con `BACKUP_DIR` definido, un loop diario corre `VACUUM INTO` a las `BACKUP_HHMM` (hora `TIMEZONE`) y conserva los `BACKUP_KEEP` más recientes. Alternativa manual: `sqlite3 data/routine-bot.db ".backup backup.db"` (cron).
 - El loop de `getUpdates` ya reintenta con backoff ante fallos de red.
 
-## Roadmap v2
+### Ingesta por email: IMAP y Gmail API
+
+Dos conectores de ingesta conviven con el mismo contrato `IngestConnector` de v2:
+
+- **IMAP**: cuentas en `IMAP_ACCOUNTS` (JSON con `host`, `user`, `pass`, `telegramId`).
+- **Gmail API**: cuentas en `GMAIL_ACCOUNTS` (JSON con `clientId`, `clientSecret`, `refreshToken`, `telegramId`).
+  REST puro cero deps: OAuth2 con refresh-token grant, query configurable (default `in:inbox is:unread`),
+  y marca el mail como leído SOLO si lo guardó o ya era duplicado.
+
+En ambos: cada email nuevo entra como job en `waiting` y se notifica por Telegram — nada se
+confirma solo: `/confirm`.
+
+Para obtener el `refreshToken` de Gmail:
+
+1. Google Cloud Console → credenciales → OAuth client (tipo Desktop) → `clientId`/`clientSecret`.
+2. Abrí esta URL con tu clientId, aprobá, y copiá el `?code=` de la URL de redirect (que falla
+   a `localhost:1` por diseño): `https://accounts.google.com/o/oauth2/v2/auth?client_id=CLIENT_ID&redirect_uri=http://localhost:1&response_type=code&scope=https://www.googleapis.com/auth/gmail.readonly&access_type=offline&prompt=consent`
+3. Canjeá el code: `curl -s -X POST https://oauth2.googleapis.com/token -d client_id=CLIENT_ID -d client_secret=CLIENT_SECRET -d code=EL_CODE -d redirect_uri=http://localhost:1 -d grant_type=authorization_code`
+4. Pegá el `refresh_token` que devuelve en `GMAIL_ACCOUNTS`.
+
+## Roadmap
+
+- v2 completa (M0–M4): fundaciones, IMAP, acciones webhook, voz con Voxtral, fase `improve` real,
+  timezone y ops (backups, `/prune`, `/health`, multi-arch).
+- Posibles siguientes pasos: OAuth interactivo por chat (hoy el `refresh_token` se carga por config),
+  push de Gmail con Pub/Sub para ingest instantánea, o librería OAuth de proveedor si se relaja cero deps.
 
 - Voz en Telegram (transcripción) y conector de email real, que además habilita la fase `improve`.
 - Panel de jobs en `waiting` para re-tomarlos; multi-rutina por usuario.
