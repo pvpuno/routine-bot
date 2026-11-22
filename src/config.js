@@ -14,7 +14,9 @@ export const config = {
   MISTRAL_BASE_URL: process.env.MISTRAL_BASE_URL || 'https://api.mistral.ai/v1',
   MISTRAL_TIMEOUT_MS: Number(process.env.MISTRAL_TIMEOUT_MS || 30000),
   MISTRAL_RETRIES: Number(process.env.MISTRAL_RETRIES || 2),
-  POLL_SECONDS: Number(process.env.POLL_SECONDS || 30)
+  POLL_SECONDS: Number(process.env.POLL_SECONDS || 30),
+  REMINDER_MINUTES: Number(process.env.REMINDER_MINUTES ?? 60),
+  REMINDER_AFTER_HOURS: Number(process.env.REMINDER_AFTER_HOURS ?? 6)
 };
 
 fs.mkdirSync(path.dirname(config.DB_PATH), { recursive: true });
