@@ -89,7 +89,7 @@ tú:  sí
 bot: Aprobado y activado. La ejecución automática corre SOLO para esta rutina aprobada.
 ```
 
-Comandos: `/start` (nueva conversación), `/restate`, `/status`, `/skip`, `/jobs` (lista de jobs con ambos timestamps) y `/confirm` (revisa y confirma los jobs en `waiting`, uno a la vez).
+Comandos: `/start` (nueva conversación), `/restate`, `/status`, `/skip`, `/mejorar` (análisis de mejoras de la fase improve), `/confirm`, `/routines`, `/routine <id|off>`, `/schedule <HH:MM|off>`, `/export [id]`, `/import {json}`, `/stats`, `/action <id> <url|off>`, `/runs`, `/prune [dias]` (purga jobs confirmados/fallidos viejos; los waiting jamás se borran), `/health` (estado de DB, poller y loops) y `/jobs` (lista de jobs con ambos timestamps).
 
 ### Ingesta de emails en v1
 
@@ -158,7 +158,7 @@ UNIT
 sudo systemctl enable --now routine-bot
 ```
 
-- Backup de la DB: `sqlite3 data/routine-bot.db ".backup backup.db"` (cron).
+- Backup de la DB: con `BACKUP_DIR` definido, un loop diario corre `VACUUM INTO` a las `BACKUP_HHMM` (hora `TIMEZONE`) y conserva los `BACKUP_KEEP` más recientes. Alternativa manual: `sqlite3 data/routine-bot.db ".backup backup.db"` (cron).
 - El loop de `getUpdates` ya reintenta con backoff ante fallos de red.
 
 ## Roadmap v2

@@ -14,6 +14,7 @@ export function tzParts(date = new Date(), timeZone) {
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
+    second: '2-digit',
     hour12: false
   });
   const get = (type) => fmt.formatToParts(date).find((p) => p.type === type)?.value;
@@ -25,7 +26,8 @@ export function tzParts(date = new Date(), timeZone) {
     month: String(get('month')),
     day: String(get('day')),
     hour,
-    minute: Number(get('minute'))
+    minute: Number(get('minute')),
+    second: Number(get('second'))
   };
 }
 
