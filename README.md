@@ -89,7 +89,7 @@ tú:  sí
 bot: Aprobado y activado. La ejecución automática corre SOLO para esta rutina aprobada.
 ```
 
-Comandos: `/start` (nueva conversación), `/restate`, `/status`, `/skip`, `/mejorar` (análisis de mejoras de la fase improve), `/confirm`, `/routines`, `/routine <id|off>`, `/schedule <HH:MM|off>`, `/export [id]`, `/import {json}`, `/stats`, `/action <id> <url|off>`, `/runs`, `/prune [dias]` (purga jobs confirmados/fallidos viejos; los waiting jamás se borran), `/health` (estado de DB, poller y loops) y `/jobs` (lista de jobs con ambos timestamps).
+Comandos: `/start` (nueva conversación), `/restate`, `/status`, `/skip`, `/mejorar` (análisis de mejoras de la fase improve), `/confirm`, `/routines`, `/routine <id|off>`, `/schedule <HH:MM|off>`, `/export [id]`, `/import {json}`, `/stats`, `/action <id> <url|off>`, `/runs`, `/prune [dias]` (purga jobs confirmados/fallidos viejos; los waiting jamás se borran), `/health` (estado de DB, poller y loops), `/gmail` (admin: OAuth asistido por chat para conectar casillas Gmail) y `/jobs` (lista de jobs con ambos timestamps).
 
 ### Ingesta de emails en v1
 
@@ -173,7 +173,15 @@ Dos conectores de ingesta conviven con el mismo contrato `IngestConnector` de v2
 En ambos: cada email nuevo entra como job en `waiting` y se notifica por Telegram — nada se
 confirma solo: `/confirm`.
 
-Para obtener el `refreshToken` de Gmail:
+Para obtener el `refreshToken` tenés dos caminos:
+
+**Por chat (recomendado): mandá `/gmail` desde la cuenta que pongas en `ADMIN_TELEGRAM_ID`.** El bot
+guía el flujo completo: le pasás el JSON del OAuth client (`{"clientId":"...","clientSecret":"..."}`),
+te devuelve el link de consentimiento, pegás el `?code=` y listo — el token queda en la DB (tabla
+`oauth_accounts`) y la ingesta arranca al instante, sin reiniciar. `/gmail status` muestra el estado
+y `/gmail off <name>` desconecta una casilla.
+
+**Manual (config):**
 
 1. Google Cloud Console → credenciales → OAuth client (tipo Desktop) → `clientId`/`clientSecret`.
 2. Abrí esta URL con tu clientId, aprobá, y copiá el `?code=` de la URL de redirect (que falla

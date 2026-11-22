@@ -97,3 +97,14 @@ CREATE TABLE IF NOT EXISTS action_runs (
 
 CREATE INDEX IF NOT EXISTS idx_action_runs_user ON action_runs(user_id, id);
 CREATE INDEX IF NOT EXISTS idx_action_runs_job ON action_runs(job_id);
+
+CREATE TABLE IF NOT EXISTS oauth_accounts (
+  name TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  client_id TEXT NOT NULL,
+  client_secret TEXT NOT NULL,
+  refresh_token TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_oauth_accounts_user ON oauth_accounts(user_id);

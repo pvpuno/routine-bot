@@ -12,6 +12,7 @@ import { StatsLoop } from './stats.js';
 import { createPollWatchdog } from './watchdog.js';
 import { ImapIngest, parseImapAccounts } from './imap.js';
 import { GmailIngest, parseGmailAccounts } from './gmail.js';
+import { GmailOAuthChat } from './gmail-oauth.js';
 import { ConnectorRegistry, IngestLoop } from './connectors.js';
 import { ActionDispatcher, WebhookAdapter } from './actions.js';
 
@@ -99,6 +100,23 @@ try {
 } catch (err) {
   console.error(`Gmail deshabilitado: ${err.message}`);
 }
+try {
+  for (const acct of repo.oauthAccounts()) {
+    const ingester = new GmailIngest(
+      {
+        name: acct.name,
+        credentials: { clientId: acct.client_id, clientSecret: acct.client_secret, refreshToken: acct.refresh_token },
+        telegramId: acct.user_id
+      },
+      { logger: console }
+    );
+    ingester.init({ repo, runner, poller, logger: console });
+    ingesters.push(ingester);
+  }
+} catch (err) {
+  console.error(`Gmail (cuentas por chat) deshabilitado: ${err.message}`);
+}
+const gmailOauth = new GmailOAuthChat({ repo, runner, poller, ingesters, logger: console });
 if (ingesters.length) {
   const seconds = Math.min(
     String(config.IMAP_ACCOUNTS || '').trim() ? config.IMAP_POLL_SECONDS : Infinity,
@@ -149,6 +167,11 @@ async function onUpdate(update) {
   }
   if (!message.text) {
     await poller.sendMessage(chatId, ATTACH_NOTICE);
+    return;
+  }
+  const oauthReply = await gmailOauth.handle(userId, message.text);
+  if (oauthReply !== null) {
+    await poller.sendMessage(chatId, oauthReply);
     return;
   }
   const cmd = message.text.trim().toLowerCase();
