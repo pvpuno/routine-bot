@@ -39,6 +39,9 @@ export class StateMachine {
     if (conv.ctx?.confirming) {
       return this.#confirmStep(conv, userId, raw);
     }
+    if (conv.ctx?.mejorar?.suggestion) {
+      return this.#mejorarStep(conv, userId, raw);
+    }
     switch (conv.phase) {
       case 'goal': return this.#phaseGoal(conv, userId, raw);
       case 'process': return this.#phaseProcess(conv, userId, raw);
@@ -94,7 +97,7 @@ export class StateMachine {
     }
     if (cmd === '/skip') {
       if (conv.phase === 'improve') {
-        return this.#phaseImprove(conv, userId, raw);
+        return this.#skipImprove(conv, userId);
       }
       if (conv.phase === 'clarify') {
         return { phase: conv.phase, reply: 'No puedo saltar clarify: necesito las 4 respuestas y los 3 ejemplos (uno con fallo y su lección).' };
@@ -128,8 +131,11 @@ export class StateMachine {
     if (cmd === '/runs') {
       return this.#showRuns(conv, userId);
     }
+    if (cmd === '/mejorar') {
+      return this.#mejorarStart(conv, userId);
+    }
 
-    return { phase: conv.phase, reply: 'Comando no reconocido. Comandos: /start, /reset, /restate, /status, /skip, /confirm, /routines, /routine <id>, /schedule <HH:MM>, /export [id], /import {json}, /stats, /action <id> <url|off>, /runs.' };
+    return { phase: conv.phase, reply: 'Comando no reconocido. Comandos: /start, /reset, /restate, /status, /skip, /mejorar, /confirm, /routines, /routine <id>, /schedule <HH:MM>, /export [id], /import {json}, /stats, /action <id> <url|off>, /runs.' };
   }
 
   #parseJsonColumn(v) {
@@ -474,17 +480,132 @@ export class StateMachine {
     return this.#routinize(conv, userId, ctx, goalText, proc, rules);
   }
 
+  async #mejorarStart(conv, userId) {
+    if (typeof this.#formatter?.improve !== 'function') {
+      return { phase: conv.phase, reply: 'El análisis de mejoras no está disponible en este modo.' };
+    }
+    const ctx = { ...conv.ctx };
+    let goalText = ctx.goal?.restated || ctx.goal?.original || '';
+    let proc = ctx.process?.structured || null;
+    let cid = conv.id;
+    if (!goalText || !proc) {
+      const routine = this.#repo.activeRoutine(userId)
+        ?? (ctx.routine?.id ? this.#repo.routine(ctx.routine.id) : null);
+      if (!routine) {
+        return { phase: conv.phase, reply: 'No hay rutina ni proceso de donde buscar mejoras: arrancá con /start.' };
+      }
+      cid = routine.conversation_id ?? conv.id;
+      const goal = this.#repo.latestGoal(cid);
+      goalText = goal?.restated || goal?.original || '';
+      const procRaw = this.#repo.latestProcess(cid);
+      if (!proc && procRaw) {
+        proc = {
+          steps: this.#parseJsonColumn(procRaw.steps) || [],
+          watch_outs: this.#parseJsonColumn(procRaw.watch_outs) || [],
+          tools: this.#parseJsonColumn(procRaw.tools) || [],
+          check_work: this.#parseJsonColumn(procRaw.check_work) || [],
+          info_from: this.#parseJsonColumn(procRaw.info_from) || [],
+          feedback_from: this.#parseJsonColumn(procRaw.feedback_from) || []
+        };
+      }
+    }
+    if (!goalText || !proc) {
+      return { phase: conv.phase, reply: 'No encuentro la meta o el proceso: no puedo mejorar a ciegas.' };
+    }
+
+    const suggestion = await this.#formatter.improve(goalText, this.#processSummary(proc), this.#repo.rules(cid));
+    ctx.goal = { ...(ctx.goal || { original: goalText }), restated: ctx.goal?.restated || goalText };
+    ctx.process = { ...(ctx.process || {}), structured: proc };
+    ctx.mejorar = { suggestion };
+    this.#repo.saveContext(conv, ctx, conv.phase);
+    return {
+      phase: conv.phase,
+      reply: [
+        'Fase 4/6 — improve (análisis):',
+        `proceso vs meta: ${suggestion.assessment}`,
+        `mejora propuesta: ${suggestion.idea} (esfuerzo: ${suggestion.effort})`,
+        '',
+        'Respondé "sí" para que reproponga la rutina con la mejora aplicada, mandame tu proceso corregido, "no" para armar la rutina como estaba, o "cancelar".'
+      ].join('\n')
+    };
+  }
+
+  async #mejorarStep(conv, userId, raw) {
+    const ctx = { ...conv.ctx };
+    const goalText = ctx.goal?.restated || ctx.goal?.original || '';
+    const proc = ctx.process?.structured;
+    const rules = this.#repo.rules(conv.id);
+    if (/^\s*cancel(?:ar|o)?\s*[.!,…]*\s*$/i.test(raw)) {
+      delete ctx.mejorar;
+      this.#repo.saveContext(conv, ctx, conv.phase);
+      return { phase: conv.phase, reply: 'Cancelado: nada cambia por ahora. /skip (o seguí donde estabas) para armar la rutina con el proceso actual.' };
+    }
+
+    let proc2 = proc;
+    if (StateMachine.AFFIRM_RE.test(raw)) {
+      const idea = ctx.mejorar?.suggestion?.idea || '';
+      proc2 = { ...proc, steps: [...(proc.steps || []), ...(idea ? [`mejora aplicada: ${idea}`] : [])] };
+    } else if (!/^\s*no\b/i.test(raw)) {
+      const structured = await this.#formatter.structureProcess(raw);
+      proc2 = structured;
+    }
+    delete ctx.mejorar;
+    ctx.process = { ...ctx.process, structured: proc2 };
+    return this.#routinize(conv, userId, ctx, goalText, proc2, rules);
+  }
+
+  async #skipImprove(conv, userId) {
+    const ctx = { ...conv.ctx };
+    if (!ctx.process?.structured || !ctx.goal?.restated) {
+      return { phase: conv.phase, reply: 'No puedo saltar a routines: faltan goal confirmada y proceso estructurado.' };
+    }
+    if (ctx.mejorar?.suggestion) {
+      return this.#mejorarStep(conv, userId, 'no');
+    }
+    ctx.improve = ctx.improve || 'skipped (sin análisis de mejoras disponible)';
+    this.#repo.saveContext(conv, ctx, 'routines');
+    const rules = this.#repo.rules(conv.id);
+    return this.#routinize(conv, userId, ctx, ctx.goal.restated, ctx.process.structured, rules);
+  }
+
   async #phaseImprove(conv, userId, raw) {
     const ctx = { ...conv.ctx };
     if (!ctx.process?.structured || !ctx.goal?.restated) {
       return { phase: conv.phase, reply: 'No puedo saltar a routines: faltan goal confirmada y proceso estructurado.' };
     }
-    ctx.improve = 'skipped (sin conectores en v1)';
-    this.#repo.saveContext(conv, ctx, 'routines');
-    const goalText = ctx.goal.restated;
-    const proc = ctx.process.structured;
-    const rules = this.#repo.rules(conv.id);
-    return this.#routinize(conv, userId, ctx, goalText, proc, rules);
+
+    if (ctx.mejorar?.suggestion) {
+      return this.#mejorarStep(conv, userId, raw);
+    }
+
+    if (/^\s*mejorar?\s*[.!,…]*\s*$/i.test(raw) || StateMachine.AFFIRM_RE.test(raw)) {
+      if (typeof this.#formatter?.improve !== 'function') {
+        ctx.improve = 'skipped (sin análisis de mejoras disponible)';
+        this.#repo.saveContext(conv, ctx, 'routines');
+        const rules = this.#repo.rules(conv.id);
+        return this.#routinize(conv, userId, ctx, ctx.goal.restated, ctx.process.structured, rules);
+      }
+      const suggestion = await this.#formatter.improve(
+        ctx.goal.restated,
+        this.#processSummary(ctx.process.structured),
+        this.#repo.rules(conv.id)
+      );
+      ctx.improve = 'mejora propuesta';
+      ctx.mejorar = { suggestion };
+      this.#repo.saveContext(conv, ctx, conv.phase);
+      return {
+        phase: conv.phase,
+        reply: [
+          `Fase 4/6 — improve:`,
+          `proceso vs meta: ${suggestion.assessment}`,
+          `mejora propuesta: ${suggestion.idea} (esfuerzo: ${suggestion.effort})`,
+          '',
+          'Respondé "sí" para que reproponga la rutina con la mejora aplicada, mandame tu proceso corregido, "no" para armar la rutina como estaba, o "cancelar".'
+        ].join('\n')
+      };
+    }
+
+    return this.#mejorarStep(conv, userId, raw);
   }
 
   async #routinize(conv, userId, ctx, goalText, proc, rules) {

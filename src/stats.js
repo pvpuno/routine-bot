@@ -1,5 +1,6 @@
 import { config } from './config.js';
 import { TaskLoop } from './task-loop.js';
+import { tzParts } from './time.js';
 
 const DAY = 24 * 3600000;
 
@@ -53,13 +54,14 @@ export class StatsLoop extends TaskLoop {
   #poller;
   #now;
 
-  constructor({ repo, poller, logger = console, tickMs = 60000, now, day, hhmm } = {}) {
+  constructor({ repo, poller, logger = console, tickMs = 60000, now, day, hhmm, timeZone } = {}) {
     super({ logger, tickMs });
     this.#repo = repo;
     this.#poller = poller;
     this.#now = now ?? (() => new Date());
     this.day = day ?? config.STATS_DAY;
     this.hhmm = hhmm ?? config.STATS_HHMM;
+    this.timeZone = timeZone; // undefined = config.TIMEZONE (private = UTC)
     this.enabled = Boolean(this.hhmm) && this.hhmm !== 'off' && this.day >= 0 && this.day <= 6;
   }
 
@@ -71,8 +73,9 @@ export class StatsLoop extends TaskLoop {
     if (!this.enabled) return [];
     const fired = [];
     const d = this.#now();
-    const hhmm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-    if (d.getDay() !== this.day || hhmm !== this.hhmm) return fired;
+    const parts = tzParts(d, this.timeZone);
+    const hhmm = `${String(parts.hour).padStart(2, '0')}:${String(parts.minute).padStart(2, '0')}`;
+    if (parts.weekday !== this.day || hhmm !== this.hhmm) return fired;
     const nowMs = d.getTime();
 
     for (const row of this.#repo.usersWithJobs()) {

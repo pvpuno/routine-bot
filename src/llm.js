@@ -1,7 +1,7 @@
 import { config } from './config.js';
 import {
   GOAL_SYSTEM, PROCESS_SYSTEM, CLARIFY_RULE_SYSTEM, CLARIFY_EXAMPLES_SYSTEM,
-  ROUTINES_SYSTEM, REVIEW_SYSTEM
+  ROUTINES_SYSTEM, REVIEW_SYSTEM, IMPROVE_SYSTEM
 } from './prompts/index.js';
 
 export class LlmError extends Error {}
@@ -156,5 +156,52 @@ export class MistralFormatter {
       better_way: asString(out.better_way),
       next_step: asString(out.next_step)
     };
+  }
+
+  async improve(goalText, processSummary, rules) {
+    const out = await this.#chat(
+      IMPROVE_SYSTEM,
+      `META: ${goalText}\n\nPROCESO:\n${processSummary}\n\nREGLAS:\n${rules.map((r) => `- [${r.kind}] ${r.text}`).join('\n')}`
+    );
+    const assessment = asString(out.assessment);
+    const idea = asString(out.idea);
+    if (!assessment || !idea) {
+      throw new LlmError('La respuesta del LLM no incluyó "assessment" e "idea" de la mejora.');
+    }
+    return {
+      assessment,
+      idea,
+      effort: asString(out.effort, 'medio')
+    };
+  }
+
+  // Voz → texto con Voxtral (multipart: file + model). Devuelve el texto transcripto.
+  async transcribeAudio(buffer, { filename = 'nota.ogg', mimeType = 'audio/ogg', language } = {}) {
+    const form = new FormData();
+    form.append('file', new Blob([buffer], { type: mimeType }), filename);
+    form.append('model', config.MISTRAL_VOXTRAL_MODEL);
+    if (language) form.append('language', String(language));
+
+    let res;
+    try {
+      res = await fetch(`${config.MISTRAL_BASE_URL}/audio/transcriptions`, {
+        method: 'POST',
+        headers: { Authorization: this.#headers.Authorization },
+        body: form,
+        signal: AbortSignal.timeout(config.MISTRAL_TIMEOUT_MS)
+      });
+    } catch (err) {
+      throw new LlmError(`Mistral (Voxtral) no respondió: ${err.message}`);
+    }
+    if (!res.ok) {
+      throw new LlmError(`Mistral (Voxtral) HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    }
+    let data = null;
+    try {
+      data = await res.json();
+    } catch {}
+    const text = asString(data?.text);
+    if (!text) throw new LlmError('La transcripción volvió vacía.');
+    return text;
   }
 }
