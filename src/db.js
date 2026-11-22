@@ -20,6 +20,33 @@ const MIGRATIONS = [
         db.exec('ALTER TABLE routines ADD COLUMN schedule TEXT');
       }
     }
+  },
+  {
+    version: 2,
+    description: 'routines.action_config y tabla action_runs para acciones post-confirmación',
+    run(db) {
+      if (!columnExists(db, 'routines', 'action_config')) {
+        db.exec('ALTER TABLE routines ADD COLUMN action_config TEXT');
+      }
+      db.exec(
+        `CREATE TABLE IF NOT EXISTS action_runs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          job_id INTEGER NOT NULL REFERENCES jobs(id),
+          routine_id INTEGER,
+          user_id TEXT NOT NULL,
+          adapter TEXT NOT NULL,
+          target TEXT NOT NULL,
+          status TEXT NOT NULL,
+          http_status INTEGER,
+          response TEXT,
+          error TEXT,
+          started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+          finished_at TEXT
+        )`
+      );
+      db.exec('CREATE INDEX IF NOT EXISTS idx_action_runs_user ON action_runs(user_id, id)');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_action_runs_job ON action_runs(job_id)');
+    }
   }
 ];
 
@@ -249,5 +276,33 @@ export class Repo {
       return this.db.prepare('SELECT * FROM jobs WHERE user_id = ? AND status = ? ORDER BY id').all(userId, status);
     }
     return this.db.prepare('SELECT * FROM jobs WHERE user_id = ? ORDER BY id').all(userId);
+  }
+
+  setRoutineActionConfig(routineId, cfg) {
+    this.db.prepare('UPDATE routines SET action_config = ? WHERE id = ?').run(cfg == null ? null : J(cfg), routineId);
+  }
+
+  insertActionRun({ jobId, routineId, userId, adapter, target }) {
+    const res = this.db.prepare(
+      "INSERT INTO action_runs (job_id, routine_id, user_id, adapter, target, status, started_at) VALUES (?, ?, ?, ?, ?, 'running', ?)"
+    ).run(jobId, routineId ?? null, userId, adapter, target, now());
+    return Number(res.lastInsertRowid);
+  }
+
+  finishActionRun(id, { status, httpStatus = null, response = null, error = null }) {
+    this.db.prepare(
+      'UPDATE action_runs SET status = ?, http_status = ?, response = ?, error = ?, finished_at = ? WHERE id = ?'
+    ).run(status, httpStatus, response == null ? null : String(response).slice(0, 2000), error, now(), id);
+  }
+
+  actionRunsFor(userId, limit = 10) {
+    return this.db.prepare('SELECT * FROM action_runs WHERE user_id = ? ORDER BY id DESC LIMIT ?')
+      .all(userId, Math.min(50, Math.max(1, Number(limit) || 10)));
+  }
+
+  successfulActionRun(jobId, target) {
+    return this.db.prepare(
+      "SELECT id FROM action_runs WHERE job_id = ? AND target = ? AND status = 'ok' LIMIT 1"
+    ).get(jobId, target) || null;
   }
 }
