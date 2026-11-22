@@ -1,4 +1,5 @@
 import { config } from './config.js';
+import { TaskLoop } from './task-loop.js';
 
 const DAY = 24 * 3600000;
 
@@ -47,24 +48,23 @@ export function statsMessage(s, windowText = 'últimos 7 días') {
   return lines.join('\n');
 }
 
-export class StatsLoop {
+export class StatsLoop extends TaskLoop {
   #repo;
   #poller;
-  #logger;
   #now;
-  #tickMs;
-  #timer;
 
   constructor({ repo, poller, logger = console, tickMs = 60000, now, day, hhmm } = {}) {
+    super({ logger, tickMs });
     this.#repo = repo;
     this.#poller = poller;
-    this.#logger = logger;
-    this.#tickMs = tickMs ?? 60000;
     this.#now = now ?? (() => new Date());
     this.day = day ?? config.STATS_DAY;
     this.hhmm = hhmm ?? config.STATS_HHMM;
     this.enabled = Boolean(this.hhmm) && this.hhmm !== 'off' && this.day >= 0 && this.day <= 6;
-    this.running = false;
+  }
+
+  get loopName() {
+    return 'stats';
   }
 
   async runOnce() {
@@ -86,19 +86,5 @@ export class StatsLoop {
       fired.push(row.user_id);
     }
     return fired;
-  }
-
-  start() {
-    if (!this.enabled || this.running) return;
-    this.running = true;
-    this.#timer = setInterval(() => {
-      this.runOnce().catch((err) => this.#logger.error(`stats falló: ${err.message}`));
-    }, this.#tickMs);
-    if (this.#timer.unref) this.#timer.unref();
-  }
-
-  stop() {
-    if (this.#timer) clearInterval(this.#timer);
-    this.running = false;
   }
 }

@@ -8,6 +8,7 @@ import { TelegramPoller } from './telegram.js';
 import { ReminderLoop } from './reminders.js';
 import { ScheduleLoop } from './schedule.js';
 import { StatsLoop } from './stats.js';
+import { createPollWatchdog } from './watchdog.js';
 
 function fileEnv(path) {
   if (!fs.existsSync(path)) return;
@@ -25,6 +26,7 @@ const poller = new TelegramPoller(config, console, {
   loadOffset: () => repo.cursor('telegram_offset'),
   saveOffset: (value) => repo.saveCursor('telegram_offset', value)
 });
+poller.onPollFailure = createPollWatchdog(repo, poller, config.ADMIN_TELEGRAM_ID);
 const reminders = new ReminderLoop({ repo, poller });
 const scheduleLoop = new ScheduleLoop({ repo, poller });
 const statsLoop = new StatsLoop({ repo, poller });
