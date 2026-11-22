@@ -101,8 +101,8 @@ export class Repo {
   saveRoutine(conv, userId, routine) {
     const action = Array.isArray(routine.action) ? JSON.stringify(routine.action) : String(routine.action);
     const res = this.db.prepare(
-      'INSERT INTO routines (conversation_id, user_id, trigger, action, idempotency_key_rule, active) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(conv.id, userId, routine.trigger, action, routine.idempotency_key_rule, routine.active ? 1 : 0);
+      'INSERT INTO routines (conversation_id, user_id, trigger, action, idempotency_key_rule, active, schedule) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run(conv.id, userId, routine.trigger, action, routine.idempotency_key_rule, routine.active ? 1 : 0, routine.schedule ?? null);
     return this.db.prepare('SELECT * FROM routines WHERE id = ?').get(res.lastInsertRowid);
   }
 

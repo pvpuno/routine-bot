@@ -25,7 +25,7 @@ export class StateMachine {
     if (!raw) return { phase: this.#repo.conversation(userId).phase, reply: 'Mandame texto, por favor.' };
 
     if (raw.startsWith('/')) {
-      return this.#command(userId, raw.toLowerCase());
+      return this.#command(userId, raw);
     }
 
 
@@ -47,7 +47,7 @@ export class StateMachine {
 
 
   #command(userId, raw) {
-    const cmd = raw.split(/\s+/)[0];
+    const cmd = raw.split(/\s+/)[0].toLowerCase();
     const conv = this.#repo.conversation(userId);
     if (cmd === '/start') {
       const restated = conv.ctx?.goal?.restated;
@@ -106,8 +106,119 @@ export class StateMachine {
     if (cmd === '/schedule') {
       return this.#useSchedule(conv, userId, raw);
     }
+    if (cmd === '/export') {
+      return this.#exportRoutine(conv, userId, raw);
+    }
+    if (cmd === '/import') {
+      return this.#importRoutine(conv, userId, raw);
+    }
 
-    return { phase: conv.phase, reply: 'Comando no reconocido. Comandos: /start, /reset, /restate, /status, /skip, /confirm, /routines, /routine <id>, /schedule <HH:MM>.' };
+    return { phase: conv.phase, reply: 'Comando no reconocido. Comandos: /start, /reset, /restate, /status, /skip, /confirm, /routines, /routine <id>, /schedule <HH:MM>, /export [id], /import {json}.' };
+  }
+
+  #parseJsonColumn(v) {
+    try { return JSON.parse(v); } catch { return v; }
+  }
+
+  #exportRoutine(conv, userId, raw) {
+    const arg = raw.split(/\s+/).slice(1).join(' ').trim();
+    let routine;
+    if (arg) {
+      routine = /^\d+$/.test(arg) ? this.#repo.routine(Number(arg)) : null;
+      if (!routine || routine.user_id !== userId) {
+        return { phase: conv.phase, reply: `No encuentro la rutina ${arg} que sea tuya. Mirá /routines.` };
+      }
+    } else {
+      routine = this.#repo.activeRoutine(userId);
+      if (!routine) return { phase: conv.phase, reply: 'No hay rutina activa para exportar: usá "/export <id>" o mirá /routines.' };
+    }
+
+    const cid = routine.conversation_id ?? conv.id;
+    const goal = this.#repo.latestGoal(cid);
+    const procRaw = this.#repo.latestProcess(cid);
+    const proc = procRaw ? {
+      steps: this.#parseJsonColumn(procRaw.steps),
+      watch_outs: this.#parseJsonColumn(procRaw.watch_outs),
+      tools: this.#parseJsonColumn(procRaw.tools),
+      check_work: this.#parseJsonColumn(procRaw.check_work),
+      info_from: this.#parseJsonColumn(procRaw.info_from),
+      feedback_from: this.#parseJsonColumn(procRaw.feedback_from)
+    } : null;
+
+    const exportObject = {
+      version: 1,
+      routine: {
+        trigger: routine.trigger,
+        action: this.#parseJsonColumn(routine.action),
+        idempotency_key_rule: routine.idempotency_key_rule,
+        schedule: routine.schedule ?? null
+      },
+      goal: goal?.restated ?? null,
+      process: proc,
+      rules: this.#repo.rules(cid).map((r) => ({ kind: r.kind, text: r.text }))
+    };
+
+    return {
+      phase: conv.phase,
+      reply: [
+        `Export de la rutina [id ${routine.id}]:`,
+        '```json',
+        JSON.stringify(exportObject, null, 2),
+        '```',
+        'Otros la pueden activar con /import (queda inactiva hasta que la apruebe el dueño).'
+      ].join('\n')
+    };
+  }
+
+  #importRoutine(conv, userId, raw) {
+    const jsonText = raw.replace(/^\/import\s*/i, '').trim();
+    if (!jsonText) {
+      return { phase: conv.phase, reply: 'Pegame el JSON después de /import (podés sacarlo con /export en el otro bot).' };
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(jsonText);
+    } catch {
+      return { phase: conv.phase, reply: 'No pude parsear el JSON: revisá que esté completo (puede haber quedado cortado por el límite de Telegram).' };
+    }
+
+    const data = parsed?.routine ?? parsed;
+    const missing = ['trigger', 'idempotency_key_rule'].filter((k) => typeof data?.[k] !== 'string' || !data[k].trim());
+    if (missing.length) {
+      return { phase: conv.phase, reply: `Al JSON le falta o no es válido: ${missing.join(', ')}. El formato lo tenés en /export.` };
+    }
+
+    const actionRaw = data.action;
+    const action = Array.isArray(actionRaw) ? actionRaw.map((x) => String(x).trim()).filter(Boolean)
+      : typeof actionRaw === 'string' && actionRaw.trim() ? [actionRaw.trim()] : [];
+    if (!action.length) missing.push('action');
+    if (missing.includes('action')) {
+      return { phase: conv.phase, reply: 'Al JSON le falta o no es válido: action. El formato lo tenés en /export.' };
+    }
+
+    let schedule = null;
+    if (data.schedule != null) {
+      const m = String(data.schedule).match(/^([01]\d|2[0-3]):([0-5]\d)$/);
+      if (!m) return { phase: conv.phase, reply: `schedule inválido ("${data.schedule}"): debe ser HH:MM o ausente.` };
+      schedule = `${m[1].padStart(2, '0')}:${m[2]}`;
+    }
+
+    const stored = this.#repo.saveRoutine(conv, userId, {
+      trigger: data.trigger.trim(),
+      action,
+      idempotency_key_rule: data.idempotency_key_rule.trim(),
+      schedule,
+      active: false
+    });
+
+    return {
+      phase: conv.phase,
+      reply: [
+        `Rutina importada como [id ${stored.id}] — quedó INACTIVA y es solo tuya.`,
+        'Revisala con /routines; si te sirve, activala con: /routine ' + stored.id,
+        '(Un "sí" en review sigue siendo la única forma de aprobar una rutina nueva de banco; una importada también necesita tu activación explícita.)'
+      ].join('\n')
+    };
   }
 
   #routineActionText(r) {
