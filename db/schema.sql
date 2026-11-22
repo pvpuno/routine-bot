@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS routines (
   action TEXT NOT NULL,
   idempotency_key_rule TEXT NOT NULL,
   active INTEGER NOT NULL DEFAULT 0,
+  schedule TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 

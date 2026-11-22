@@ -103,7 +103,11 @@ export class StateMachine {
       return this.#useRoutine(conv, userId, raw);
     }
 
-    return { phase: conv.phase, reply: 'Comando no reconocido. Comandos: /start, /reset, /restate, /status, /skip, /confirm, /routines, /routine <id>.' };
+    if (cmd === '/schedule') {
+      return this.#useSchedule(conv, userId, raw);
+    }
+
+    return { phase: conv.phase, reply: 'Comando no reconocido. Comandos: /start, /reset, /restate, /status, /skip, /confirm, /routines, /routine <id>, /schedule <HH:MM>.' };
   }
 
   #routineActionText(r) {
@@ -123,10 +127,41 @@ export class StateMachine {
         reply: 'Todavía no tenés rutinas. Terminá el flujo (goal → process → clarify → review) y aparecen acá.'
       };
     }
-    const lines = routines.map((r) => `- [id ${r.id}] ${r.active ? '**ACTIVA**' : 'inactiva'} — trigger: ${r.trigger} — acción: ${this.#routineActionText(r)}`);
+    const lines = routines.map((r) => `- [id ${r.id}] ${r.active ? '**ACTIVA**' : 'inactiva'}${r.schedule ? ` — diaria ${r.schedule}` : ''} — trigger: ${r.trigger} — acción: ${this.#routineActionText(r)}`);
     return {
       phase: conv.phase,
-      reply: ['Tus rutinas:', ...lines, '', 'Usá "/routine <id>" para poner otra como activa, o "/routine off" para desactivar.'].join('\n')
+      reply: ['Tus rutinas:', ...lines, '', 'Usá "/routine <id>" para poner otra como activa, "/routine off" para desactivar, y "/schedule HH:MM" para un aviso diario.'].join('\n')
+    };
+  }
+
+  #useSchedule(conv, userId, raw) {
+    const arg = raw.split(/\s+/).slice(1).join(' ').trim();
+    const routine = this.#repo.activeRoutine(userId);
+
+    if (/^off$/i.test(arg)) {
+      if (!routine) return { phase: conv.phase, reply: 'No hay rutina activa: activá una con /routine <id> primero.' };
+      this.#repo.setRoutineSchedule(routine.id, null);
+      return { phase: conv.phase, reply: `Trigger temporal quitado de la rutina [id ${routine.id}].` };
+    }
+
+    if (!arg) {
+      const current = routine?.schedule ? `\n\nRutina [id ${routine.id}] programada a las ${routine.schedule}.` : '';
+      return { phase: conv.phase, reply: `Usá "/schedule HH:MM" para un aviso diario (ej.: /schedule 08:30), o "/schedule off" para quitarlo.${current}` };
+    }
+
+    const m = arg.match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
+    if (!m) return { phase: conv.phase, reply: `"${arg}" no es una hora válida. Usá HH:MM (00:00 a 23:59), ej.: /schedule 08:30.` };
+
+    if (!routine) return { phase: conv.phase, reply: 'No hay rutina activa a la que ponerle horario: activá una con /routine <id>.' };
+
+    const schedule = `${m[1].padStart(2, '0')}:${m[2]}`;
+    this.#repo.setRoutineSchedule(routine.id, schedule);
+    return {
+      phase: conv.phase,
+      reply: [
+        `Trigger temporal guardado: la rutina [id ${routine.id}] te va a avisar todos los días a las ${schedule} (hora del servidor).`,
+        'Ojo: solo avisa — nada se confirma ni ejecuta solo; los jobs siguen esperando tu /confirm. Con "/schedule off" lo quités.'
+      ].join('\n')
     };
   }
 
