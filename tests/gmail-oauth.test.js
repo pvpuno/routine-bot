@@ -114,6 +114,47 @@ test('gmail oauth: permisos — sin ADMIN configurado o con otro user, se niega'
   repo.db.close();
 });
 
+test('gmail watch: /gmail watch on|off activa y desactiva el push (requiere GMAIL_WATCH_TOPIC)', async (t) => {
+  config.ADMIN_TELEGRAM_ID = '42';
+  config.GMAIL_WATCH_TOPIC = '';
+  t.after(() => { config.ADMIN_TELEGRAM_ID = ''; config.GMAIL_WATCH_TOPIC = ''; });
+
+  const { repo, runner } = setup();
+  const { chat, ingesters } = oauthSetup({ repo, runner });
+  mockedExchange(t, { body: { access_token: 'AT', refresh_token: 'RRR' } });
+
+  const sinTopic = await chat.handle('42', '/gmail watch on');
+  assert.match(sinTopic, /GMAIL_WATCH_TOPIC/, 'sin topic configurado no se puede activar');
+
+  await chat.handle('42', '/gmail');
+  await chat.handle('42', '{"clientId":"CLI","clientSecret":"SEC","name":"casilla1"}');
+  await chat.handle('42', 'http://localhost:1/?code=c1');
+  config.GMAIL_WATCH_TOPIC = 'projects/p/topics/gmail-push';
+
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    const u = String(url);
+    if (u === 'https://oauth2.googleapis.com/token') {
+      return new Response(JSON.stringify({ access_token: 'AT', expires_in: 3600 }), { status: 200 });
+    }
+    if (u.endsWith('/watch')) return new Response(JSON.stringify({ historyId: '91', expiration: '4102444800000' }), { status: 200 });
+    if (u.endsWith('/stop')) return new Response('{}', { status: 200 });
+    throw new Error(`URL inesperada: ${u}`);
+  });
+
+  const on = await chat.handle('42', '/gmail watch on');
+  assert.match(on, /push activo/);
+  assert.match(on, /GMAIL_PUBSUB_SUBSCRIPTION/);
+  assert.equal(repo.cursor('gmail_watch:casilla1'), '4102444800000');
+
+  const sinNombre = await chat.handle('42', '/gmail watch on fantasma');
+  assert.match(sinNombre, /No encuentro una casilla/);
+
+  const off = await chat.handle('42', '/gmail watch off');
+  assert.match(off, /push desactivado/);
+  assert.equal(repo.cursor('gmail_watch:casilla1'), 'off');
+  repo.db.close();
+});
+
 test('gmail oauth: /gmail off desconecta (DB + ingester en vivo) y /gmail status muestra estado', async (t) => {
   config.ADMIN_TELEGRAM_ID = '42';
   t.after(() => { config.ADMIN_TELEGRAM_ID = ''; });

@@ -5,6 +5,7 @@ export const OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 export const OAUTH_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 export const GMAIL_API_BASE = 'https://gmail.googleapis.com/gmail/v1/users/me';
 export const GMAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
+export const PUBSUB_SCOPE = 'https://www.googleapis.com/auth/pubsub';
 export const G_REDIRECT_URI = 'http://localhost:1';
 
 const FETCH_TIMEOUT_MS = 15000;
@@ -15,6 +16,26 @@ export class GmailError extends Error {
     super(message);
     this.code = code;
   }
+}
+
+// Grant refresh_token a mano (cero deps). Devuelve { value, expiresAt } listo para cachear.
+export async function fetchAccessToken({ clientId, clientSecret, refreshToken }, nowMs = Date.now()) {
+  const res = await fetch(OAUTH_TOKEN_URL, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: refreshToken,
+      grant_type: 'refresh_token'
+    }),
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data?.access_token) {
+    throw new GmailError(`refresh de token falló: HTTP ${res.status}${data?.error ? ` (${data.error})` : ''}`);
+  }
+  return { value: String(data.access_token), expiresAt: nowMs + Number(data.expires_in || 3600) * 1000 };
 }
 
 export function base64UrlDecode(input = '') {
@@ -53,7 +74,7 @@ export function oauthConsentUrl({ clientId, redirectUri = G_REDIRECT_URI } = {})
     client_id: clientId,
     redirect_uri: redirectUri,
     response_type: 'code',
-    scope: GMAIL_SCOPE,
+    scope: `${GMAIL_SCOPE} ${PUBSUB_SCOPE}`,
     access_type: 'offline',
     prompt: 'consent'
   });
@@ -127,6 +148,7 @@ export class GmailIngest extends IngestConnector {
   #logger;
   #now;
   #token = null;
+  #email = null;
 
   constructor(account, { logger = console, now } = {}) {
     super(account?.name || 'gmail');
@@ -148,25 +170,9 @@ export class GmailIngest extends IngestConnector {
   }
 
   async #accessToken() {
-    const { clientId, clientSecret, refreshToken } = this.#account.credentials;
     const nowMs = this.#now().getTime();
     if (this.#token && this.#token.expiresAt - TOKEN_SKEW_MS > nowMs) return this.#token.value;
-    const res = await fetch(OAUTH_TOKEN_URL, {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        client_id: clientId,
-        client_secret: clientSecret,
-        refresh_token: refreshToken,
-        grant_type: 'refresh_token'
-      }),
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
-    });
-    const data = await res.json().catch(() => null);
-    if (!res.ok || !data?.access_token) {
-      throw new GmailError(`refresh de token falló: HTTP ${res.status}${data?.error ? ` (${data.error})` : ''}`);
-    }
-    this.#token = { value: String(data.access_token), expiresAt: nowMs + Number(data.expires_in || 3600) * 1000 };
+    this.#token = await fetchAccessToken(this.#account.credentials, nowMs);
     return this.#token.value;
   }
 
@@ -187,6 +193,42 @@ export class GmailIngest extends IngestConnector {
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
     });
     if (!res.ok) throw new GmailError(`marcado de leído falló: HTTP ${res.status} en ${id}`);
+  }
+
+  // Dirección del mailbox (cachada) para matchear notificaciones de Pub/Sub.
+  async emailAddress() {
+    if (this.#email) return this.#email;
+    const data = await this.#gmail('/profile', await this.#accessToken());
+    this.#email = String(data?.emailAddress || '').toLowerCase();
+    return this.#email;
+  }
+
+  // Push: le pide a Gmail que publique notificaciones de cambios en el topic Pub/Sub.
+  // El watch vence (~7 días); el push loop lo renueva antes de que expire.
+  async startWatch(topicName) {
+    const token = await this.#accessToken();
+    const res = await fetch(`${GMAIL_API_BASE}/watch`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ topicName }),
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
+    });
+    if (!res.ok) throw new GmailError(`users.watch falló: HTTP ${res.status}`);
+    return res.json().catch(() => ({}));
+  }
+
+  async stopWatch() {
+    try {
+      const token = await this.#accessToken();
+      const res = await fetch(`${GMAIL_API_BASE}/stop`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
   }
 
   async poll() {

@@ -181,6 +181,14 @@ te devuelve el link de consentimiento, pegás el `?code=` y listo — el token q
 `oauth_accounts`) y la ingesta arranca al instante, sin reiniciar. `/gmail status` muestra el estado
 y `/gmail off <name>` desconecta una casilla.
 
+**Push instantáneo (opcional):** además del polling, se puede conectar Pub/Sub en modo **pull**
+(sin endpoint público): creá topic + suscripción PULL en GCP con rol publisher en el topic para
+`gmail-api-push@system.gserviceaccount.com`, definí `GMAIL_WATCH_TOPIC` y
+`GMAIL_PUBSUB_SUBSCRIPTION` y activá con `/gmail watch on` — el bot renueva `users.watch` solo
+antes de vencer (~7 días) y, cuando llega una notificación, hace poll de esa casilla al instante.
+Las casillas deben estar conectadas con el scope de Pub/Sub (relinkeá con `/gmail` si las
+conectaste antes de esta versión).
+
 **Manual (config):**
 
 1. Google Cloud Console → credenciales → OAuth client (tipo Desktop) → `clientId`/`clientSecret`.
@@ -193,8 +201,6 @@ y `/gmail off <name>` desconecta una casilla.
 
 - v2 completa (M0–M4): fundaciones, IMAP, acciones webhook, voz con Voxtral, fase `improve` real,
   timezone y ops (backups, `/prune`, `/health`, multi-arch).
-- Posibles siguientes pasos: OAuth interactivo por chat (hoy el `refresh_token` se carga por config),
-  push de Gmail con Pub/Sub para ingest instantánea, o librería OAuth de proveedor si se relaja cero deps.
-
-- Voz en Telegram (transcripción) y conector de email real, que además habilita la fase `improve`.
-- Panel de jobs en `waiting` para re-tomarlos; multi-rutina por usuario.
+- Posibles siguientes pasos: librería OAuth de proveedor si se relaja cero deps.
+- Implementado encima de v2: OAuth interactivo por chat (`/gmail`) y push de Gmail con Pub/Sub
+  para ingest instantánea (modo pull, sin endpoint público).
