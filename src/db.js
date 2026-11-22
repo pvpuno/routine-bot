@@ -9,6 +9,7 @@ export function openDb(file = config.DB_PATH) {
   fs.mkdirSync(file === ':memory:' ? '.' : path.dirname(file), { recursive: true });
   const db = new DatabaseSync(file);
   db.exec(SCHEMA_SQL);
+  try { db.exec('ALTER TABLE routines ADD COLUMN schedule TEXT'); } catch { /* base vieja sin columna y ya migrada */ }
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA foreign_keys = ON');
   db.exec('PRAGMA busy_timeout = 5000');
@@ -200,6 +201,16 @@ export class Repo {
     return this.db.prepare(
       "SELECT user_id, COUNT(*) AS count, MIN(saved_at) AS oldest FROM jobs WHERE status = 'waiting' AND saved_at IS NOT NULL GROUP BY user_id ORDER BY oldest"
     ).all();
+  }
+
+  scheduledRoutines() {
+    return this.db.prepare(
+      "SELECT id, user_id, schedule, trigger FROM routines WHERE active = 1 AND schedule IS NOT NULL AND schedule != '' ORDER BY schedule"
+    ).all();
+  }
+
+  setRoutineSchedule(routineId, schedule) {
+    this.db.prepare('UPDATE routines SET schedule = ? WHERE id = ?').run(schedule == null || schedule === '' ? null : String(schedule), routineId);
   }
 
   jobsFor(userId, status = null) {
