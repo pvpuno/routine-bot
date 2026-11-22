@@ -197,6 +197,10 @@ export class Repo {
     ).run(name, String(value));
   }
 
+  usersWithJobs() {
+    return this.db.prepare('SELECT DISTINCT user_id FROM jobs ORDER BY user_id').all();
+  }
+
   waitingJobsByUser() {
     return this.db.prepare(
       "SELECT user_id, COUNT(*) AS count, MIN(saved_at) AS oldest FROM jobs WHERE status = 'waiting' AND saved_at IS NOT NULL GROUP BY user_id ORDER BY oldest"

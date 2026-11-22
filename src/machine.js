@@ -1,3 +1,5 @@
+import { weeklyStats, statsMessage } from './stats.js';
+
 const CLARIFY_QUESTIONS = [
   { key: 'conflict', ask: 'Pregunta 1/4 — conflicto: si dos fuentes se contradicen (ej.: el email dice una cosa y el sistema otra), ¿cuál gana? Cada respuesta se convierte en regla.' },
   { key: 'saved', ask: 'Pregunta 2/4 — saved: ¿qué condiciones hacen que "el registro existe y es correcto"?' },
@@ -109,11 +111,14 @@ export class StateMachine {
     if (cmd === '/export') {
       return this.#exportRoutine(conv, userId, raw);
     }
+    if (cmd === '/stats') {
+      return { phase: conv.phase, reply: statsMessage(weeklyStats(this.#repo, userId)) };
+    }
     if (cmd === '/import') {
       return this.#importRoutine(conv, userId, raw);
     }
 
-    return { phase: conv.phase, reply: 'Comando no reconocido. Comandos: /start, /reset, /restate, /status, /skip, /confirm, /routines, /routine <id>, /schedule <HH:MM>, /export [id], /import {json}.' };
+    return { phase: conv.phase, reply: 'Comando no reconocido. Comandos: /start, /reset, /restate, /status, /skip, /confirm, /routines, /routine <id>, /schedule <HH:MM>, /export [id], /import {json}, /stats.' };
   }
 
   #parseJsonColumn(v) {
