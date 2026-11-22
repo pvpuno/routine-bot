@@ -36,7 +36,7 @@ export class Runner {
     const norm = normalizeEmail(rawEmail);
     if (!norm.ok) throw new RoutineError(norm.error, 'invalid_email');
 
-    const routine = this.#repo.latestRoutine(userId);
+    const routine = this.#repo.activeRoutine(userId);
     if (!routine || !routine.active) {
       throw new RoutineError(
         'No hay rutina aprobada y activa para este usuario: nada se ejecuta sin aprobación explícita en review.',

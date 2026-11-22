@@ -96,7 +96,69 @@ export class StateMachine {
       return { phase: conv.phase, reply: '/skip solo aplica en las fases clarify/improve.' };
     }
 
-    return { phase: conv.phase, reply: 'Comando no reconocido. Comandos: /start, /reset, /restate, /status, /skip, /confirm.' };
+    if (cmd === '/routines') {
+      return this.#listRoutines(conv, userId);
+    }
+    if (cmd === '/routine') {
+      return this.#useRoutine(conv, userId, raw);
+    }
+
+    return { phase: conv.phase, reply: 'Comando no reconocido. Comandos: /start, /reset, /restate, /status, /skip, /confirm, /routines, /routine <id>.' };
+  }
+
+  #routineActionText(r) {
+    try {
+      const a = JSON.parse(r.action);
+      return Array.isArray(a) ? a.join('; ') : String(a);
+    } catch {
+      return r.action;
+    }
+  }
+
+  #listRoutines(conv, userId) {
+    const routines = this.#repo.routinesFor(userId);
+    if (!routines.length) {
+      return {
+        phase: conv.phase,
+        reply: 'Todavía no tenés rutinas. Terminá el flujo (goal → process → clarify → review) y aparecen acá.'
+      };
+    }
+    const lines = routines.map((r) => `- [id ${r.id}] ${r.active ? '**ACTIVA**' : 'inactiva'} — trigger: ${r.trigger} — acción: ${this.#routineActionText(r)}`);
+    return {
+      phase: conv.phase,
+      reply: ['Tus rutinas:', ...lines, '', 'Usá "/routine <id>" para poner otra como activa, o "/routine off" para desactivar.'].join('\n')
+    };
+  }
+
+  #useRoutine(conv, userId, raw) {
+    const arg = raw.split(/\s+/).slice(1).join(' ').trim();
+    if (!arg) {
+      return { phase: conv.phase, reply: 'Usá "/routine <id>" (mirá los ids con /routines), o "/routine off" para desactivar.' };
+    }
+
+    if (/^off$/i.test(arg)) {
+      const current = this.#repo.activeRoutine(userId);
+      if (current) this.#repo.setRoutineActive(current.id, false);
+      return {
+        phase: conv.phase,
+        reply: 'Sin rutina activa: no se ingiere nada hasta que actives una con "/routine <id>".'
+      };
+    }
+
+    if (!/^\d+$/.test(arg)) {
+      return { phase: conv.phase, reply: `"${arg}" no es un id de rutina. Mirá los ids con /routines.` };
+    }
+
+    const target = this.#repo.routine(Number(arg));
+    if (!target || target.user_id !== userId) {
+      return { phase: conv.phase, reply: `No encuentro la rutina ${arg} que sea tuya. Mirá /routines.` };
+    }
+
+    this.#repo.activateRoutine(target.id, userId);
+    return {
+      phase: conv.phase,
+      reply: `Rutina [id ${target.id}] activada: ${target.trigger}\nLos eventos nuevos se ingieren contra esta rutina; "/routine off" la desactiva.`
+    };
   }
 
   async #phaseGoal(conv, userId, raw) {
@@ -342,7 +404,7 @@ export class StateMachine {
       return this.#routinize(conv, userId, ctx, goalText, proc, rules);
     }
     if (StateMachine.AFFIRM_RE.test(raw)) {
-      this.#repo.setRoutineActive(ctx.routine.id, true);
+      this.#repo.activateRoutine(ctx.routine.id, userId);
       this.#repo.saveContext(conv, { ...ctx, approved: true }, 'done');
       return {
         phase: 'done',
