@@ -5,6 +5,7 @@ import { MistralFormatter, LlmError } from './llm.js';
 import { StateMachine } from './machine.js';
 import { Runner } from './routines/runner.js';
 import { TelegramPoller } from './telegram.js';
+import { ReminderLoop } from './reminders.js';
 
 function fileEnv(path) {
   if (!fs.existsSync(path)) return;
@@ -22,6 +23,7 @@ const poller = new TelegramPoller(config, console, {
   loadOffset: () => repo.cursor('telegram_offset'),
   saveOffset: (value) => repo.saveCursor('telegram_offset', value)
 });
+const reminders = new ReminderLoop({ repo, poller });
 
 const VOICE_NOTICE = 'Recibí una nota de voz. En v1 solo leo texto: transcribila y mandala como mensaje. (Voz llega en v2.)';
 const ATTACH_NOTICE = 'Recibí un adjunto. En v1 solo leo texto plano.';
@@ -69,8 +71,10 @@ async function onUpdate(update) {
 
 process.on('SIGINT', () => {
   poller.stop();
+  reminders.stop();
   process.exit(0);
 });
 
 console.log('routine-bot en marcha (long polling). DB:', config.DB_PATH);
+reminders.start();
 await poller.start(onUpdate);

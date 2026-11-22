@@ -196,6 +196,12 @@ export class Repo {
     ).run(name, String(value));
   }
 
+  waitingJobsByUser() {
+    return this.db.prepare(
+      "SELECT user_id, COUNT(*) AS count, MIN(saved_at) AS oldest FROM jobs WHERE status = 'waiting' AND saved_at IS NOT NULL GROUP BY user_id ORDER BY oldest"
+    ).all();
+  }
+
   jobsFor(userId, status = null) {
     if (status) {
       return this.db.prepare('SELECT * FROM jobs WHERE user_id = ? AND status = ? ORDER BY id').all(userId, status);
