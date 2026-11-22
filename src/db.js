@@ -47,6 +47,23 @@ const MIGRATIONS = [
       db.exec('CREATE INDEX IF NOT EXISTS idx_action_runs_user ON action_runs(user_id, id)');
       db.exec('CREATE INDEX IF NOT EXISTS idx_action_runs_job ON action_runs(job_id)');
     }
+  },
+  {
+    version: 3,
+    description: 'cuentas OAuth de Gmail conectadas por chat (/gmail)',
+    run(db) {
+      db.exec(
+        `CREATE TABLE IF NOT EXISTS oauth_accounts (
+          name TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          client_id TEXT NOT NULL,
+          client_secret TEXT NOT NULL,
+          refresh_token TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+        )`
+      );
+      db.exec('CREATE INDEX IF NOT EXISTS idx_oauth_accounts_user ON oauth_accounts(user_id)');
+    }
   }
 ];
 
@@ -298,6 +315,23 @@ export class Repo {
     const runs = this.db.prepare(`DELETE FROM action_runs WHERE job_id IN (${ph})`).run(...ids);
     const jobs = this.db.prepare(`DELETE FROM jobs WHERE id IN (${ph})`).run(...ids);
     return { deletedJobs: Number(jobs.changes), deletedRuns: Number(runs.changes) };
+  }
+
+  saveOauthAccount({ name, userId, clientId, clientSecret, refreshToken }) {
+    this.db.prepare(
+      `INSERT INTO oauth_accounts (name, user_id, client_id, client_secret, refresh_token)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(name) DO UPDATE SET user_id = excluded.user_id, client_id = excluded.client_id,
+       client_secret = excluded.client_secret, refresh_token = excluded.refresh_token`
+    ).run(String(name), String(userId), String(clientId), String(clientSecret), String(refreshToken));
+  }
+
+  oauthAccounts() {
+    return this.db.prepare('SELECT name, user_id, client_id, client_secret, refresh_token, created_at FROM oauth_accounts ORDER BY name').all();
+  }
+
+  deleteOauthAccount(name) {
+    return Number(this.db.prepare('DELETE FROM oauth_accounts WHERE name = ?').run(String(name)).changes);
   }
 
   health() {
