@@ -16,7 +16,9 @@ export const config = {
   MISTRAL_RETRIES: Number(process.env.MISTRAL_RETRIES || 2),
   POLL_SECONDS: Number(process.env.POLL_SECONDS || 30),
   REMINDER_MINUTES: Number(process.env.REMINDER_MINUTES ?? 60),
-  REMINDER_AFTER_HOURS: Number(process.env.REMINDER_AFTER_HOURS ?? 6)
+  REMINDER_AFTER_HOURS: Number(process.env.REMINDER_AFTER_HOURS ?? 6),
+  STATS_DAY: Number(process.env.STATS_DAY ?? 1),
+  STATS_HHMM: process.env.STATS_HHMM ?? '09:00'
 };
 
 fs.mkdirSync(path.dirname(config.DB_PATH), { recursive: true });
