@@ -22,6 +22,8 @@ export const config = {
   ADMIN_TELEGRAM_ID: process.env.ADMIN_TELEGRAM_ID || '',
   IMAP_ACCOUNTS: process.env.IMAP_ACCOUNTS || '',
   IMAP_POLL_SECONDS: Number(process.env.IMAP_POLL_SECONDS ?? 60),
+  GMAIL_ACCOUNTS: process.env.GMAIL_ACCOUNTS || '',
+  GMAIL_POLL_SECONDS: Number(process.env.GMAIL_POLL_SECONDS ?? 60),
   ALLOW_PRIVATE_WEBHOOKS: process.env.ALLOW_PRIVATE_WEBHOOKS || '',
   TIMEZONE: process.env.TIMEZONE || '',
   BACKUP_DIR: process.env.BACKUP_DIR || '',

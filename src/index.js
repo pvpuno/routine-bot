@@ -11,6 +11,7 @@ import { ScheduleLoop } from './schedule.js';
 import { StatsLoop } from './stats.js';
 import { createPollWatchdog } from './watchdog.js';
 import { ImapIngest, parseImapAccounts } from './imap.js';
+import { GmailIngest, parseGmailAccounts } from './gmail.js';
 import { ConnectorRegistry, IngestLoop } from './connectors.js';
 import { ActionDispatcher, WebhookAdapter } from './actions.js';
 
@@ -78,19 +79,32 @@ function healthReport() {
   ].join('\n');
 }
 
-const imapIngesters = [];
+const ingesters = [];
 let ingestLoop = null;
 try {
   for (const account of parseImapAccounts(config.IMAP_ACCOUNTS)) {
     const ingester = new ImapIngest(account, { logger: console });
     ingester.init({ repo, runner, poller, logger: console });
-    imapIngesters.push(ingester);
-  }
-  if (imapIngesters.length) {
-    ingestLoop = new IngestLoop({ ingesters: imapIngesters, tickMs: Math.max(15, config.IMAP_POLL_SECONDS) * 1000 });
+    ingesters.push(ingester);
   }
 } catch (err) {
   console.error(`IMAP deshabilitado: ${err.message}`);
+}
+try {
+  for (const account of parseGmailAccounts(config.GMAIL_ACCOUNTS)) {
+    const ingester = new GmailIngest(account, { logger: console });
+    ingester.init({ repo, runner, poller, logger: console });
+    ingesters.push(ingester);
+  }
+} catch (err) {
+  console.error(`Gmail deshabilitado: ${err.message}`);
+}
+if (ingesters.length) {
+  const seconds = Math.min(
+    String(config.IMAP_ACCOUNTS || '').trim() ? config.IMAP_POLL_SECONDS : Infinity,
+    String(config.GMAIL_ACCOUNTS || '').trim() ? config.GMAIL_POLL_SECONDS : Infinity
+  );
+  ingestLoop = new IngestLoop({ ingesters, tickMs: Math.max(15, Number.isFinite(seconds) ? seconds : 60) * 1000 });
 }
 
 const VOICE_FALLBACK = 'No pude transcribir la nota de voz. Transcribila vos y mandala como texto.';
