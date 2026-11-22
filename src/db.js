@@ -109,8 +109,29 @@ export class Repo {
     return this.db.prepare('SELECT * FROM routines WHERE user_id = ? ORDER BY id DESC LIMIT 1').get(userId) || null;
   }
 
+  routinesFor(userId) {
+    return this.db.prepare('SELECT * FROM routines WHERE user_id = ? ORDER BY id DESC').all(userId);
+  }
+
+  routine(id) {
+    return this.db.prepare('SELECT * FROM routines WHERE id = ?').get(id) || null;
+  }
+
+  activeRoutine(userId) {
+    return this.db.prepare('SELECT * FROM routines WHERE user_id = ? AND active = 1 ORDER BY id DESC LIMIT 1').get(userId) || null;
+  }
+
   setRoutineActive(routineId, active) {
     this.db.prepare('UPDATE routines SET active = ? WHERE id = ?').run(active ? 1 : 0, routineId);
+  }
+
+  // Una sola rutina activa por usuario: apagar las demás y encender esta.
+  activateRoutine(routineId, userId) {
+    return this.#withTransaction(() => {
+      this.db.prepare('UPDATE routines SET active = 0 WHERE user_id = ? AND active = 1').run(userId);
+      this.db.prepare('UPDATE routines SET active = 1 WHERE id = ? AND user_id = ?').run(routineId, userId);
+      return this.db.prepare('SELECT * FROM routines WHERE id = ? AND user_id = ?').get(routineId, userId) || null;
+    });
   }
 
   findJob(idempotency_key, userId = null) {
