@@ -24,6 +24,9 @@ export const config = {
   IMAP_POLL_SECONDS: Number(process.env.IMAP_POLL_SECONDS ?? 60),
   ALLOW_PRIVATE_WEBHOOKS: process.env.ALLOW_PRIVATE_WEBHOOKS || '',
   TIMEZONE: process.env.TIMEZONE || '',
+  BACKUP_DIR: process.env.BACKUP_DIR || '',
+  BACKUP_HHMM: process.env.BACKUP_HHMM ?? '03:30',
+  BACKUP_KEEP: Number(process.env.BACKUP_KEEP ?? 7),
   MISTRAL_VOXTRAL_MODEL: process.env.MISTRAL_VOXTRAL_MODEL || 'voxtral-mini-latest',
   VOICE_TRANSCRIBE: process.env.VOICE_TRANSCRIBE ?? '1'
 };

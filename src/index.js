@@ -5,6 +5,7 @@ import { MistralFormatter, LlmError } from './llm.js';
 import { StateMachine } from './machine.js';
 import { Runner } from './routines/runner.js';
 import { TelegramPoller } from './telegram.js';
+import { BackupLoop } from './backups.js';
 import { ReminderLoop } from './reminders.js';
 import { ScheduleLoop } from './schedule.js';
 import { StatsLoop } from './stats.js';
@@ -31,7 +32,7 @@ actionRegistry.register(new WebhookAdapter({
   allowPrivate: config.ALLOW_PRIVATE_WEBHOOKS === '1'
 }));
 const actions = new ActionDispatcher({ repo, registry: actionRegistry, logger: console });
-const machine = new StateMachine(repo, llm, runner, actions);
+const machine = new StateMachine(repo, llm, runner, actions, healthReport);
 const poller = new TelegramPoller(config, console, {
   loadOffset: () => repo.cursor('telegram_offset'),
   saveOffset: (value) => repo.saveCursor('telegram_offset', value)
@@ -40,6 +41,42 @@ poller.onPollFailure = createPollWatchdog(repo, poller, config.ADMIN_TELEGRAM_ID
 const reminders = new ReminderLoop({ repo, poller });
 const scheduleLoop = new ScheduleLoop({ repo, poller });
 const statsLoop = new StatsLoop({ repo, poller });
+const backups = new BackupLoop({ repo });
+
+const startedAt = Date.now();
+
+function ago(ts) {
+  if (!ts) return 'nunca';
+  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  return s < 60 ? `hace ${s}s` : `hace ${Math.round(s / 60)}m`;
+}
+
+function humanUptime() {
+  const s = Math.round((Date.now() - startedAt) / 1000);
+  const h = Math.floor(s / 3600);
+  const m = Math.round((s % 3600) / 60);
+  return h ? `${h}h ${m}m` : `${m}m ${s % 60}s`;
+}
+
+function healthReport() {
+  const h = repo.health();
+  const jobs = Object.entries(h.jobs).map(([k, v]) => `${k}=${v}`).join(', ') || 'ninguno';
+  const loops = [reminders, scheduleLoop, statsLoop, backups, ingestLoop]
+    .filter(Boolean)
+    .map((l) => {
+      const extra = l.lastRunAt
+        ? `, último tick ${ago(l.lastRunAt)}${l.lastError ? ` (error: ${l.lastError})` : ''}`
+        : '';
+      return `${l.loopName}${l.running ? '' : ' (parado)'}${extra}`;
+    })
+    .join('; ');
+  return [
+    `Salud de routine-bot (uptime ${humanUptime()}):`,
+    `- getUpdates: offset ${poller.offset}, fallos seguidos ${poller.failures}, último poll ${ago(poller.lastPollAt)}${poller.lastPollError ? ` (error: ${poller.lastPollError})` : ''}`,
+    `- db: jobs ${jobs}; rutinas ${h.routines} (${h.activeRoutines} activas); schema v${h.schemaVersion}; cursores ${h.cursors}`,
+    `- loops: ${loops}`
+  ].join('\n');
+}
 
 const imapIngesters = [];
 let ingestLoop = null;
@@ -125,6 +162,7 @@ process.on('SIGINT', () => {
   reminders.stop();
   scheduleLoop.stop();
   statsLoop.stop();
+  backups.stop();
   ingestLoop?.stop();
   process.exit(0);
 });
@@ -133,5 +171,6 @@ console.log('routine-bot en marcha (long polling). DB:', config.DB_PATH);
 reminders.start();
 scheduleLoop.start();
 statsLoop.start();
+backups.start();
 ingestLoop?.start();
 await poller.start(onUpdate);

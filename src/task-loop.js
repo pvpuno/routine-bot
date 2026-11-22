@@ -3,6 +3,8 @@ export class TaskLoop {
   running = false;
   enabled = true;
   timer = null;
+  lastRunAt = null;
+  lastError = null;
   #logger;
 
   constructor({ logger = console, tickMs = 60000 } = {}) {
@@ -26,11 +28,21 @@ export class TaskLoop {
     if (!this.enabled || this.running) return;
     this.running = true;
     this.timer = setInterval(() => {
+      const ok = () => {
+        this.lastRunAt = Date.now();
+        this.lastError = null;
+      };
+      const fail = (err) => {
+        this.lastRunAt = Date.now();
+        this.lastError = err.message;
+        this.logError(err.message);
+      };
       try {
         const out = this.runOnce();
-        if (out && typeof out.catch === 'function') out.catch((err) => this.logError(err.message));
+        if (out && typeof out.catch === 'function') out.then(ok, fail);
+        else ok();
       } catch (err) {
-        this.logError(err.message);
+        fail(err);
       }
     }, this.tickMs);
     if (this.timer.unref) this.timer.unref();

@@ -14,12 +14,14 @@ export class StateMachine {
   #formatter;
   #runner;
   #actions;
+  #health;
 
-  constructor(repo, formatter, runner = null, actions = null) {
+  constructor(repo, formatter, runner = null, actions = null, health = null) {
     this.#repo = repo;
     this.#formatter = formatter;
     this.#actions = actions;
     this.#runner = runner;
+    this.#health = health;
   }
 
   static AFFIRM_RE = /^\s*(?:s[ií]\s*[,;:.!?…]*\s*(?:eso\s+es)?|eso\s+es|ok(?:ay)?|dale|vamos|correcto|exacto|perfecto|aprobado|apruebo|confirmo|sí)\s*[.!,…]*\s*$/i;
@@ -134,8 +136,17 @@ export class StateMachine {
     if (cmd === '/mejorar') {
       return this.#mejorarStart(conv, userId);
     }
+    if (cmd === '/prune') {
+      return this.#usePrune(conv, userId, raw);
+    }
+    if (cmd === '/health') {
+      if (typeof this.#health !== 'function') {
+        return { phase: conv.phase, reply: 'El chequeo de salud no está disponible en este modo.' };
+      }
+      return { phase: conv.phase, reply: await this.#health() };
+    }
 
-    return { phase: conv.phase, reply: 'Comando no reconocido. Comandos: /start, /reset, /restate, /status, /skip, /mejorar, /confirm, /routines, /routine <id>, /schedule <HH:MM>, /export [id], /import {json}, /stats, /action <id> <url|off>, /runs.' };
+    return { phase: conv.phase, reply: 'Comando no reconocido. Comandos: /start, /reset, /restate, /status, /skip, /mejorar, /confirm, /routines, /routine <id>, /schedule <HH:MM>, /export [id], /import {json}, /stats, /action <id> <url|off>, /runs, /prune, /health.' };
   }
 
   #parseJsonColumn(v) {
@@ -765,6 +776,22 @@ export class StateMachine {
       }
       throw err;
     }
+  }
+
+  #usePrune(conv, userId, raw) {
+    const arg = raw.trim().split(/\s+/)[1];
+    if (arg !== undefined && !/^\d+$/.test(arg)) {
+      return { phase: conv.phase, reply: '"<dias>" debe ser un entero (ej.: /prune 30). Sin número uso 30 días.' };
+    }
+    const days = Math.min(365, Math.max(1, Number(arg) || 30));
+    const { deletedJobs, deletedRuns } = this.#repo.pruneJobs(userId, days);
+    if (!deletedJobs) {
+      return { phase: conv.phase, reply: `Nada para purgar: no tenés jobs confirmados/fallidos con más de ${days} día(s). Los waiting jamás se borran.` };
+    }
+    return {
+      phase: conv.phase,
+      reply: `Purga lista: ${deletedJobs} job(s) confirmados/fallidos con más de ${days} día(s) y ${deletedRuns} run(s) de acciones asociadas. Los waiting no se tocan.`
+    };
   }
 
   #showRuns(conv, userId, raw = '') {

@@ -278,6 +278,40 @@ export class Repo {
     return this.db.prepare('SELECT * FROM jobs WHERE user_id = ? ORDER BY id').all(userId);
   }
 
+  // Backup online: escribe una copia consistente sin frenar al bot.
+  vacuumInto(file) {
+    const safe = String(file).replace(/'/g, "''");
+    this.db.exec(`VACUUM INTO '${safe}'`);
+  }
+
+  // Purga los jobs TERMINADOS (confirmados/fallidos) más viejos que `days` días;
+  // los waiting jamás se tocan. Borra primero sus action_runs para no dejar huérfanos.
+  pruneJobs(userId, days) {
+    if (!(Number(days) >= 0)) throw new Error('pruneJobs: days debe ser un número >= 0');
+    const cutoff = new Date(Date.now() - Number(days) * 86400000).toISOString();
+    const marks = this.db.prepare(
+      "SELECT id FROM jobs WHERE user_id = ? AND status IN ('confirmed', 'failed') AND COALESCE(confirmed_at, saved_at) IS NOT NULL AND COALESCE(confirmed_at, saved_at) <= ?"
+    ).all(userId, cutoff);
+    if (!marks.length) return { deletedJobs: 0, deletedRuns: 0 };
+    const ids = marks.map((r) => r.id);
+    const ph = ids.map(() => '?').join(',');
+    const runs = this.db.prepare(`DELETE FROM action_runs WHERE job_id IN (${ph})`).run(...ids);
+    const jobs = this.db.prepare(`DELETE FROM jobs WHERE id IN (${ph})`).run(...ids);
+    return { deletedJobs: Number(jobs.changes), deletedRuns: Number(runs.changes) };
+  }
+
+  health() {
+    const jobs = {};
+    for (const row of this.db.prepare('SELECT status, COUNT(*) AS c FROM jobs GROUP BY status').all()) {
+      jobs[row.status] = Number(row.c);
+    }
+    const routines = Number(this.db.prepare('SELECT COUNT(*) AS c FROM routines').get().c);
+    const activeRoutines = Number(this.db.prepare('SELECT COUNT(*) AS c FROM routines WHERE active = 1').get().c);
+    const schemaVersion = Number(this.db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v || 0);
+    const cursors = Number(this.db.prepare('SELECT COUNT(*) AS c FROM cursors').get().c);
+    return { jobs, routines, activeRoutines, schemaVersion, cursors };
+  }
+
   setRoutineActionConfig(routineId, cfg) {
     this.db.prepare('UPDATE routines SET action_config = ? WHERE id = ?').run(cfg == null ? null : J(cfg), routineId);
   }

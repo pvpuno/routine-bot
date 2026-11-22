@@ -11,6 +11,8 @@ export class TelegramPoller {
     this.onPollFailure = options.onPollFailure || null;
     this.retryMs = options.retryMs ?? 5000;
     this.failures = 0;
+    this.lastPollAt = null;
+    this.lastPollError = null;
     this.base = `https://api.telegram.org/bot${this.token}`;
     this.running = false;
   }
@@ -88,9 +90,13 @@ export class TelegramPoller {
         );
         const data = await res.json();
         this.failures = 0;
+        this.lastPollAt = Date.now();
+        this.lastPollError = null;
         batch = data.ok ? data.result || [] : [];
       } catch (err) {
         this.failures++;
+        this.lastPollAt = Date.now();
+        this.lastPollError = err.message;
         const delay = Math.min(this.retryMs * 2 ** (this.failures - 1), 60000);
         this.logger.error(`getUpdates falló (${this.failures} seguidos): ${err.message}; reintento en ${Math.round(delay / 1000)}s`);
         try { await this.onPollFailure?.(err, this.failures); } catch (hookErr) { this.logger.error(`onPollFailure falló: ${hookErr.message}`); }
