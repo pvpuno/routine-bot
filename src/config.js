@@ -19,7 +19,9 @@ export const config = {
   REMINDER_AFTER_HOURS: Number(process.env.REMINDER_AFTER_HOURS ?? 6),
   STATS_DAY: Number(process.env.STATS_DAY ?? 1),
   STATS_HHMM: process.env.STATS_HHMM ?? '09:00',
-  ADMIN_TELEGRAM_ID: process.env.ADMIN_TELEGRAM_ID || ''
+  ADMIN_TELEGRAM_ID: process.env.ADMIN_TELEGRAM_ID || '',
+  IMAP_ACCOUNTS: process.env.IMAP_ACCOUNTS || '',
+  IMAP_POLL_SECONDS: Number(process.env.IMAP_POLL_SECONDS ?? 60)
 };
 
 fs.mkdirSync(path.dirname(config.DB_PATH), { recursive: true });
