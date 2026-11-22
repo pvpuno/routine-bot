@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS routines (
   idempotency_key_rule TEXT NOT NULL,
   active INTEGER NOT NULL DEFAULT 0,
   schedule TEXT,
+  action_config TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
@@ -78,3 +79,21 @@ CREATE TABLE IF NOT EXISTS cursors (
   name TEXT PRIMARY KEY,
   value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS action_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id INTEGER NOT NULL REFERENCES jobs(id),
+  routine_id INTEGER,
+  user_id TEXT NOT NULL,
+  adapter TEXT NOT NULL,
+  target TEXT NOT NULL,
+  status TEXT NOT NULL,
+  http_status INTEGER,
+  response TEXT,
+  error TEXT,
+  started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  finished_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_action_runs_user ON action_runs(user_id, id);
+CREATE INDEX IF NOT EXISTS idx_action_runs_job ON action_runs(job_id);

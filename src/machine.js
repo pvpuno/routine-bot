@@ -1,4 +1,6 @@
 import { weeklyStats, statsMessage } from './stats.js';
+import { config } from './config.js';
+import { ActionError, assertPublicHttpUrl, parseActionConfig } from './actions.js';
 
 const CLARIFY_QUESTIONS = [
   { key: 'conflict', ask: 'Pregunta 1/4 — conflicto: si dos fuentes se contradicen (ej.: el email dice una cosa y el sistema otra), ¿cuál gana? Cada respuesta se convierte en regla.' },
@@ -11,10 +13,12 @@ export class StateMachine {
   #repo;
   #formatter;
   #runner;
+  #actions;
 
-  constructor(repo, formatter, runner = null) {
+  constructor(repo, formatter, runner = null, actions = null) {
     this.#repo = repo;
     this.#formatter = formatter;
+    this.#actions = actions;
     this.#runner = runner;
   }
 
@@ -48,7 +52,7 @@ export class StateMachine {
   }
 
 
-  #command(userId, raw) {
+  async #command(userId, raw) {
     const cmd = raw.split(/\s+/)[0].toLowerCase();
     const conv = this.#repo.conversation(userId);
     if (cmd === '/start') {
@@ -118,7 +122,14 @@ export class StateMachine {
       return this.#importRoutine(conv, userId, raw);
     }
 
-    return { phase: conv.phase, reply: 'Comando no reconocido. Comandos: /start, /reset, /restate, /status, /skip, /confirm, /routines, /routine <id>, /schedule <HH:MM>, /export [id], /import {json}, /stats.' };
+    if (cmd === '/action') {
+      return this.#useAction(conv, userId, raw);
+    }
+    if (cmd === '/runs') {
+      return this.#showRuns(conv, userId);
+    }
+
+    return { phase: conv.phase, reply: 'Comando no reconocido. Comandos: /start, /reset, /restate, /status, /skip, /confirm, /routines, /routine <id>, /schedule <HH:MM>, /export [id], /import {json}, /stats, /action <id> <url|off>, /runs.' };
   }
 
   #parseJsonColumn(v) {
@@ -591,6 +602,80 @@ export class StateMachine {
   }
 
 
+  async #useAction(conv, userId, raw) {
+    const parts = raw.trim().split(/\s+/);
+    const args = parts.slice(1);
+    if (!args.length) {
+      const routine = this.#repo.activeRoutine(userId);
+      const cfg = routine ? parseActionConfig(routine.action_config) : null;
+      return {
+        phase: conv.phase,
+        reply: cfg
+          ? `Acción de la rutina ${routine.id}: ${cfg.type} → ${cfg.url}\nNada se ejecuta sin tu /confirm.`
+          : 'La rutina activa no tiene acción configurada. Usá "/action <id> <url>" (mirá /routines).'
+      };
+    }
+
+    const [idStr, ...rest] = args;
+    const routine = /^\d+$/.test(idStr) ? this.#repo.routine(Number(idStr)) : null;
+    if (!routine || routine.user_id !== userId) {
+      return { phase: conv.phase, reply: `No encuentro la rutina ${idStr} que sea tuya. Mirá /routines.` };
+    }
+
+    const tail = rest.join(' ').trim();
+    if (/^off$/i.test(tail)) {
+      this.#repo.setRoutineActionConfig(routine.id, null);
+      return { phase: conv.phase, reply: `Rutina ${routine.id}: acción desconfigurada, no se va a ejecutar nada automático.` };
+    }
+    if (!tail) {
+      return { phase: conv.phase, reply: 'Falta la URL: "/action <id> <url>" o "/action <id> off".' };
+    }
+
+    try {
+      const url = await assertPublicHttpUrl(tail, { allowPrivate: config.ALLOW_PRIVATE_WEBHOOKS === '1' });
+      this.#repo.setRoutineActionConfig(routine.id, { type: 'webhook', url: url.toString() });
+      return {
+        phase: conv.phase,
+        reply: `Acción configurada para la rutina ${routine.id}: POST ${url}\nSe ejecuta recién cuando VOS confirmás el job con "/confirm". Detalles con "/action" y "/runs".`
+      };
+    } catch (err) {
+      if (err instanceof ActionError) {
+        return { phase: conv.phase, reply: `URL rechazada: ${err.message}` };
+      }
+      throw err;
+    }
+  }
+
+  #showRuns(conv, userId, raw = '') {
+    const limit = Number((raw.trim().split(/\s+/)[1] || '').replace(/\D/g, '').slice(0, 2));
+    const runs = this.#repo.actionRunsFor(userId, limit || 10);
+    if (!runs.length) {
+      return {
+        phase: conv.phase,
+        reply: 'No hay ejecuciones de acciones todavía: se registran cuando confirmás jobs de una rutina con acción configurada.'
+      };
+    }
+    const lines = runs.map((r) => {
+      const when = String(r.finished_at || r.started_at || '').slice(0, 19).replace('T', ' ');
+      const outcome = r.status === 'ok'
+        ? `ok HTTP ${r.http_status}`
+        : r.http_status
+          ? `falló con HTTP ${r.http_status}: ${r.error}`
+          : `falló: ${r.error}`;
+      return `#${r.id} job ${r.job_id} → ${r.adapter} ${r.target} → ${outcome} (${when} UTC)`;
+    });
+    return { phase: conv.phase, reply: ['Últimas ejecuciones de acciones (todas nacieron de un /confirm tuyo):', ...lines].join('\n') };
+  }
+
+  async #actionNote(out) {
+    if (!out?.confirmed || !out.job || !this.#actions) return null;
+    const res = await this.#actions.dispatchConfirmed(out.job);
+    if (!res) return null;
+    return res.ok
+      ? `⚡ Acción webhook ejecutada → HTTP ${res.httpStatus} (${res.target}). Detalle con /runs.`
+      : `⚠️ La acción webhook falló (${res.error}); el job queda confirmado igual. Detalle con /runs.`;
+  }
+
   #confirmStart(conv, userId) {
     if (!this.#runner) {
       return { phase: conv.phase, reply: 'Confirmación conversacional no disponible en este modo (falta el runner de rutinas).' };
@@ -627,13 +712,15 @@ export class StateMachine {
     };
   }
 
-  #confirmStep(conv, userId, raw) {
+  async #confirmStep(conv, userId, raw) {
     const ctx = { ...conv.ctx };
     const key = ctx.confirming.idempotency_key;
 
 
     if (StateMachine.AFFIRM_RE.test(raw)) {
       const out = this.#runner.confirmJob(userId, key, 'confirmado por chat (revisión personal)');
+      const actionNote = await this.#actionNote(out);
+      const confirmedAt = this.#runner.list(userId).find((j) => j.idempotency_key === key)?.confirmed_at ?? '(ya estaba)';
       const pending = this.#runner.waiting(userId);
       if (pending.length) {
         ctx.confirming = { idempotency_key: pending[0].idempotency_key };
@@ -641,14 +728,14 @@ export class StateMachine {
         return this.#confirmAsk(
           conv,
           pending[0],
-          [`Orden ${out.job ? 'confirmada' : 'procesada'}: confirmed_at ${this.#runner.list(userId).find((j) => j.idempotency_key === key)?.confirmed_at ?? '(ya estaba)'}`]
+          [`Orden ${out.job ? 'confirmada' : 'procesada'}: confirmed_at ${confirmedAt}`, actionNote].filter(Boolean)
         );
       }
       delete ctx.confirming;
       this.#repo.saveContext(conv, ctx, conv.phase);
       return {
         phase: conv.phase,
-        reply: `Confirmada. confirmed_at: ${this.#runner.list(userId).find((j) => j.idempotency_key === key)?.confirmed_at ?? '(ya estaba confirmada)'}`
+        reply: [`Confirmada. confirmed_at: ${confirmedAt}`, actionNote].filter(Boolean).join('\n')
       };
     }
 

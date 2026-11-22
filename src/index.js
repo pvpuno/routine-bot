@@ -10,7 +10,8 @@ import { ScheduleLoop } from './schedule.js';
 import { StatsLoop } from './stats.js';
 import { createPollWatchdog } from './watchdog.js';
 import { ImapIngest, parseImapAccounts } from './imap.js';
-import { IngestLoop } from './connectors.js';
+import { ConnectorRegistry, IngestLoop } from './connectors.js';
+import { ActionDispatcher, WebhookAdapter } from './actions.js';
 
 function fileEnv(path) {
   if (!fs.existsSync(path)) return;
@@ -22,8 +23,14 @@ function fileEnv(path) {
 fileEnv(new URL('../../.env', import.meta.url).pathname);
 
 const repo = openDb(config.DB_PATH);
-const machine = new StateMachine(repo, new MistralFormatter());
 const runner = new Runner(repo);
+const actionRegistry = new ConnectorRegistry();
+actionRegistry.register(new WebhookAdapter({
+  logger: console,
+  allowPrivate: config.ALLOW_PRIVATE_WEBHOOKS === '1'
+}));
+const actions = new ActionDispatcher({ repo, registry: actionRegistry, logger: console });
+const machine = new StateMachine(repo, new MistralFormatter(), runner, actions);
 const poller = new TelegramPoller(config, console, {
   loadOffset: () => repo.cursor('telegram_offset'),
   saveOffset: (value) => repo.saveCursor('telegram_offset', value)
