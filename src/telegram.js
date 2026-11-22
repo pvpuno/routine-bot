@@ -8,6 +8,9 @@ export class TelegramPoller {
     const loaded = options.loadOffset ? Number(options.loadOffset()) : 0;
     this.offset = Number.isFinite(loaded) && loaded > 0 ? loaded : 0;
     this.saveOffset = options.saveOffset || null;
+    this.onPollFailure = options.onPollFailure || null;
+    this.retryMs = options.retryMs ?? 5000;
+    this.failures = 0;
     this.base = `https://api.telegram.org/bot${this.token}`;
     this.running = false;
   }
@@ -59,10 +62,14 @@ export class TelegramPoller {
           `${this.base}/getUpdates?timeout=${this.pollSeconds}&offset=${this.offset}&allowed_updates=${encodeURIComponent('["message"]')}`
         );
         const data = await res.json();
+        this.failures = 0;
         batch = data.ok ? data.result || [] : [];
       } catch (err) {
-        this.logger.error(`getUpdates falló: ${err.message}; reintento en 5s`);
-        await new Promise((r) => setTimeout(r, 5000));
+        this.failures++;
+        const delay = Math.min(this.retryMs * 2 ** (this.failures - 1), 60000);
+        this.logger.error(`getUpdates falló (${this.failures} seguidos): ${err.message}; reintento en ${Math.round(delay / 1000)}s`);
+        try { await this.onPollFailure?.(err, this.failures); } catch (hookErr) { this.logger.error(`onPollFailure falló: ${hookErr.message}`); }
+        await new Promise((r) => setTimeout(r, delay));
         continue;
       }
       for (const u of batch) {

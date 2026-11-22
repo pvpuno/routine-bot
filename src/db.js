@@ -5,11 +5,38 @@ import { config } from './config.js';
 
 const SCHEMA_SQL = fs.readFileSync(new URL('../db/schema.sql', import.meta.url), 'utf8');
 
+function columnExists(db, table, name) {
+  return db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === name);
+}
+
+// Migraciones para bases creadas antes del schema vigente. Idempotentes:
+// saltan si la columna ya existe (bases sin schema_version) y registran su versión.
+const MIGRATIONS = [
+  {
+    version: 1,
+    description: 'routines.schedule para el trigger temporal',
+    run(db) {
+      if (!columnExists(db, 'routines', 'schedule')) {
+        db.exec('ALTER TABLE routines ADD COLUMN schedule TEXT');
+      }
+    }
+  }
+];
+
 export function openDb(file = config.DB_PATH) {
   fs.mkdirSync(file === ':memory:' ? '.' : path.dirname(file), { recursive: true });
   const db = new DatabaseSync(file);
   db.exec(SCHEMA_SQL);
-  try { db.exec('ALTER TABLE routines ADD COLUMN schedule TEXT'); } catch { /* base vieja sin columna y ya migrada */ }
+  db.exec(
+    "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))"
+  );
+  let current = db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v || 0;
+  for (const migration of MIGRATIONS) {
+    if (migration.version <= current) continue;
+    migration.run(db);
+    db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(migration.version);
+    current = migration.version;
+  }
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA foreign_keys = ON');
   db.exec('PRAGMA busy_timeout = 5000');

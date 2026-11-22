@@ -1,20 +1,22 @@
+import { config } from './config.js';
+import { TaskLoop } from './task-loop.js';
+
 const pad = (n) => String(n).padStart(2, '0');
 
-export class ScheduleLoop {
+export class ScheduleLoop extends TaskLoop {
   #repo;
   #poller;
-  #logger;
   #now;
-  #tickMs;
-  #timer;
 
   constructor({ repo, poller, logger = console, tickMs = 60000, now } = {}) {
+    super({ logger, tickMs });
     this.#repo = repo;
     this.#poller = poller;
-    this.#logger = logger;
-    this.#tickMs = tickMs ?? 60000;
     this.#now = now ?? (() => new Date());
-    this.running = false;
+  }
+
+  get loopName() {
+    return 'schedule';
   }
 
   async runOnce() {
@@ -43,19 +45,5 @@ export class ScheduleLoop {
       fired.push(routine.id);
     }
     return fired;
-  }
-
-  start() {
-    if (this.running) return;
-    this.running = true;
-    this.#timer = setInterval(() => {
-      this.runOnce().catch((err) => this.#logger.error(`schedule falló: ${err.message}`));
-    }, this.#tickMs);
-    if (this.#timer.unref) this.#timer.unref();
-  }
-
-  stop() {
-    if (this.#timer) clearInterval(this.#timer);
-    this.running = false;
   }
 }
