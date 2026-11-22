@@ -24,13 +24,14 @@ fileEnv(new URL('../../.env', import.meta.url).pathname);
 
 const repo = openDb(config.DB_PATH);
 const runner = new Runner(repo);
+const llm = new MistralFormatter();
 const actionRegistry = new ConnectorRegistry();
 actionRegistry.register(new WebhookAdapter({
   logger: console,
   allowPrivate: config.ALLOW_PRIVATE_WEBHOOKS === '1'
 }));
 const actions = new ActionDispatcher({ repo, registry: actionRegistry, logger: console });
-const machine = new StateMachine(repo, new MistralFormatter(), runner, actions);
+const machine = new StateMachine(repo, llm, runner, actions);
 const poller = new TelegramPoller(config, console, {
   loadOffset: () => repo.cursor('telegram_offset'),
   saveOffset: (value) => repo.saveCursor('telegram_offset', value)
@@ -55,8 +56,24 @@ try {
   console.error(`IMAP deshabilitado: ${err.message}`);
 }
 
-const VOICE_NOTICE = 'Recibí una nota de voz. En v1 solo leo texto: transcribila y mandala como mensaje. (Voz llega en v2.)';
-const ATTACH_NOTICE = 'Recibí un adjunto. En v1 solo leo texto plano.';
+const VOICE_FALLBACK = 'No pude transcribir la nota de voz. Transcribila vos y mandala como texto.';
+const ATTACH_NOTICE = 'Recibí un adjunto. Solo leo texto plano.';
+
+async function handleVoice(message, chatId, userId) {
+  const media = message.voice || message.audio;
+  try {
+    const buf = await poller.downloadFile(media.file_id);
+    const transcript = await llm.transcribeAudio(buf, {
+      filename: message.voice ? 'nota.ogg' : 'audio.mp3',
+      mimeType: message.voice ? 'audio/ogg' : 'audio/mpeg'
+    });
+    const { reply } = await machine.handle(userId, transcript);
+    await poller.sendMessage(chatId, `🎙️ ${transcript}\n\n${reply}`);
+  } catch (err) {
+    console.error(`transcripción de voz falló: ${err.message}`);
+    await poller.sendMessage(chatId, VOICE_FALLBACK);
+  }
+}
 
 async function onUpdate(update) {
   const message = update.message;
@@ -72,7 +89,11 @@ async function onUpdate(update) {
 
   let text;
   if (message.voice || message.audio) {
-    await poller.sendMessage(chatId, VOICE_NOTICE);
+    if (String(config.VOICE_TRANSCRIBE) === '0') {
+      await poller.sendMessage(chatId, VOICE_FALLBACK);
+      return;
+    }
+    await handleVoice(message, chatId, userId);
     return;
   }
   if (!message.text) {

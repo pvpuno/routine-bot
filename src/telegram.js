@@ -54,6 +54,31 @@ export class TelegramPoller {
     if (!out.ok) this.logger.error(`sendMessage falló para chat ${chatId}: ${out.description}`);
   }
 
+  // Vuelve la meta del archivo (file_path para descargar). Necesita bot en este servidor si es >20MB.
+  async getFile(fileId) {
+    const res = await fetch(`${this.base}/getFile?file_id=${encodeURIComponent(fileId)}`, {
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || data?.ok !== true || !data.result?.file_path) {
+      throw new Error(`getFile falló: ${data?.description || `HTTP ${res.status}`}`);
+    }
+    return data.result;
+  }
+
+  async downloadFile(fileId, { maxBytes = 20 * 1024 * 1024 } = {}) {
+    const meta = await this.getFile(fileId);
+    const res = await fetch(`https://api.telegram.org/file/bot${this.token}/${meta.file_path}`, {
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
+    });
+    if (!res.ok) throw new Error(`descarga de archivo falló: HTTP ${res.status}`);
+    const declared = Number(res.headers.get('content-length') || 0);
+    if (declared > maxBytes) throw new Error(`el archivo pesa ${declared} bytes y el límite es ${maxBytes}`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length > maxBytes) throw new Error(`el archivo pesa ${buf.length} bytes y el límite es ${maxBytes}`);
+    return buf;
+  }
+
   async *updates() {
     while (this.running) {
       let batch = [];

@@ -1,5 +1,6 @@
 import { config } from './config.js';
 import { TaskLoop } from './task-loop.js';
+import { tzDateString, tzParts } from './time.js';
 
 const pad = (n) => String(n).padStart(2, '0');
 
@@ -8,11 +9,12 @@ export class ScheduleLoop extends TaskLoop {
   #poller;
   #now;
 
-  constructor({ repo, poller, logger = console, tickMs = 60000, now } = {}) {
+  constructor({ repo, poller, logger = console, tickMs = 60000, now, timeZone } = {}) {
     super({ logger, tickMs });
     this.#repo = repo;
     this.#poller = poller;
     this.#now = now ?? (() => new Date());
+    this.timeZone = timeZone; // undefined = config.TIMEZONE (private = UTC)
   }
 
   get loopName() {
@@ -22,8 +24,9 @@ export class ScheduleLoop extends TaskLoop {
   async runOnce() {
     const fired = [];
     const d = this.#now();
-    const hhmm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    const day = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const parts = tzParts(d, this.timeZone);
+    const hhmm = `${pad(parts.hour)}:${pad(parts.minute)}`;
+    const day = tzDateString(parts);
     const waiting = new Map(this.#repo.waitingJobsByUser().map((w) => [w.user_id, w.count]));
 
     for (const routine of this.#repo.scheduledRoutines()) {

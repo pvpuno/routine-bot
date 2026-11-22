@@ -22,7 +22,10 @@ export const config = {
   ADMIN_TELEGRAM_ID: process.env.ADMIN_TELEGRAM_ID || '',
   IMAP_ACCOUNTS: process.env.IMAP_ACCOUNTS || '',
   IMAP_POLL_SECONDS: Number(process.env.IMAP_POLL_SECONDS ?? 60),
-  ALLOW_PRIVATE_WEBHOOKS: process.env.ALLOW_PRIVATE_WEBHOOKS || ''
+  ALLOW_PRIVATE_WEBHOOKS: process.env.ALLOW_PRIVATE_WEBHOOKS || '',
+  TIMEZONE: process.env.TIMEZONE || '',
+  MISTRAL_VOXTRAL_MODEL: process.env.MISTRAL_VOXTRAL_MODEL || 'voxtral-mini-latest',
+  VOICE_TRANSCRIBE: process.env.VOICE_TRANSCRIBE ?? '1'
 };
 
 fs.mkdirSync(path.dirname(config.DB_PATH), { recursive: true });
